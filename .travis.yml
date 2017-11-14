@@ -1,0 +1,31 @@
+language: go
+go:
+  - '1.9'
+
+addons:
+  code_climate:
+    repo_token: 1c8a05186ce71956db63ee2da6f0a4c475200cfbfbf852a56bd26b25f3b352b9
+
+script:
+  - go test -v -cover ./...
+
+after_success:
+  - GOOS=darwin GOARCH=amd64 go build
+
+deploy:
+  # Deploy to Github Releases
+  - provider: releases
+    skip_cleanup: true
+    api_key:
+      secure: Iz6IgF6R5XT3b23DGOSaR1616gwk5LZOOa4CjjcsYmTL9nhBBYRn9ZUpy/ZI5wwHlRyNv22kBBNIB3/4lXxdPWrY1yg6EtwAS7bOeUfkekEOOuzkafrbEPVIOJ/SBteDHN9dtc0AApM86+oYBHJSclRyJi2IPDIlBK9RwBeptfM6lEmM/L9f4ihcVbMHyMQ+vxszsQaCGBOqbY1JSgi+pd0Mm9/zeHtJkInNRgVt5eHNSwtGmdu/TRbqqsETri5OWVNoZg7nk5DarpbeWN4JJvu2DjN04gSz9Tky86qf4gta5oG9yg1HQoLaKQa5FjpU+vgaQxfYbshO2gG/x+13ZSBoGwTurXec9+Xw+gVEqqoGEXBC9LmdeyQJu0kKKiVrq7gUS4TlTBkgBt1HKI/k0DrGTUpeHb6gXb9cppyzwiZoYmFxq7POrSolHUUBNOhYK6Stg5XsOXqhUGx5glXqq4hza4k1joLPR1L4nyZ/9E99AUK/LgEZXMAPHuw8VzCBfEL80V5lPbz+yd8K09i8sMWEDEB55dCZn/TM2yJSgzEslUbILxvsjGpysDktWD/b1kUO02o0F8IdAAycrboaFObLTs8KV3LJxIobNGpow5GqWKecZTMzyU9Ae1UIXlPQUWXSrBPfAiK29VLU3q/9O5Tf3gbwHOd3F/Uu9eArBe0=
+    file: ssh2iterm2
+    on:
+      repo: arnested/ssh2iterm2
+      tags: true
+
+  # Purge the releases badge to get the new release number in there
+  - provider: script
+    script: curl --silent -X PURGE https://camo.githubusercontent.com/1727eca6b809a969f63a1bf8f3534d11997c8178/68747470733a2f2f6769746875622d72656c656173652d76657273696f6e2e6865726f6b756170702e636f6d2f6769746875622f61726e65737465642f73736832697465726d322f72656c656173652e737667
+    on:
+      repo: arnested/ssh2iterm2
+      tags: true
