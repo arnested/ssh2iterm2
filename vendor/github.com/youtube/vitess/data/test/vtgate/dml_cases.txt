@@ -1,0 +1,570 @@
+# update table not found
+"update nouser set val = 1"
+"table nouser not found"
+
+# delete table not found
+"delete from nouser"
+"table nouser not found"
+
+# explicit keyspace reference
+"update main.m1 set val = 1"
+{
+  "Original": "update main.m1 set val = 1",
+  "Instructions": {
+    "Opcode": "UpdateUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "update m1 set val = 1",
+    "Table": "m1"
+  }
+}
+
+# update unsharded
+"update unsharded set val = 1"
+{
+  "Original": "update unsharded set val = 1",
+  "Instructions": {
+    "Opcode": "UpdateUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "update unsharded set val = 1",
+    "Table": "unsharded"
+  }
+}
+
+# delete unsharded
+"delete from unsharded"
+{
+  "Original": "delete from unsharded",
+  "Instructions": {
+    "Opcode": "DeleteUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "delete from unsharded",
+    "Table": "unsharded"
+  }
+}
+
+# update by primary keyspace id
+"update user set val = 1 where id = 1"
+{
+  "Original": "update user set val = 1 where id = 1",
+  "Instructions": {
+    "Opcode": "UpdateEqual",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "update user set val = 1 where id = 1",
+    "Vindex": "user_index",
+    "Values": 1,
+    "Table": "user"
+  }
+}
+
+# update by primary keyspace id, stray where clause
+"update user set val = 1 where id = id2 and id = 1"
+{
+  "Original": "update user set val = 1 where id = id2 and id = 1",
+  "Instructions": {
+    "Opcode": "UpdateEqual",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "update user set val = 1 where id = id2 and id = 1",
+    "Vindex": "user_index",
+    "Values": 1,
+    "Table": "user"
+  }
+}
+
+# update by primary keyspace id, stray where clause with conversion error
+"update user set val = 1 where id = 18446744073709551616 and id = 1"
+{
+  "Original": "update user set val = 1 where id = 18446744073709551616 and id = 1",
+  "Instructions": {
+    "Opcode": "UpdateEqual",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "update user set val = 1 where id = 18446744073709551616 and id = 1",
+    "Vindex": "user_index",
+    "Values": 1,
+    "Table": "user"
+  }
+}
+
+# delete from by primary keyspace id
+"delete from user where id = 1"
+{
+  "Original": "delete from user where id = 1",
+  "Instructions": {
+    "Opcode": "DeleteEqual",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "delete from user where id = 1",
+    "Vindex": "user_index",
+    "Values": 1,
+    "Table": "user",
+    "Subquery": "select Name, Costly from user where id = 1 for update"
+  }
+}
+
+# update by lookup
+"update music set val = 1 where id = 1"
+{
+  "Original": "update music set val = 1 where id = 1",
+  "Instructions": {
+    "Opcode": "UpdateEqual",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "update music set val = 1 where id = 1",
+    "Vindex": "music_user_map",
+    "Values": 1,
+    "Table": "music"
+  }
+}
+
+# delete from by lookup
+"delete from music where id = 1"
+{
+  "Original": "delete from music where id = 1",
+  "Instructions": {
+    "Opcode": "DeleteEqual",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "delete from music where id = 1",
+    "Vindex": "music_user_map",
+    "Values": 1,
+    "Table": "music",
+    "Subquery": "select id from music where id = 1 for update"
+  }
+}
+
+# delete from, no owned vindexes
+"delete from music_extra where user_id = 1"
+{
+  "Original": "delete from music_extra where user_id = 1",
+  "Instructions": {
+    "Opcode": "DeleteEqual",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "delete from music_extra where user_id = 1",
+    "Vindex": "user_index",
+    "Values": 1,
+    "Table": "music_extra"
+  }
+}
+
+# simple insert, no values
+"insert into unsharded values()"
+{
+  "Original": "insert into unsharded values()",
+  "Instructions": {
+    "Opcode": "InsertUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "insert into unsharded values ()",
+    "Table": "unsharded"
+  }
+}
+
+# simple insert unsharded
+"insert into unsharded values(1, 2)"
+{
+  "Original": "insert into unsharded values(1, 2)",
+  "Instructions": {
+    "Opcode": "InsertUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "insert into unsharded values (1, 2)",
+    "Table": "unsharded"
+  }
+}
+
+# insert unsharded with select
+"insert into unsharded select id from unsharded_auto"
+{
+  "Original": "insert into unsharded select id from unsharded_auto",
+  "Instructions": {
+    "Opcode": "InsertUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "insert into unsharded select id from unsharded_auto",
+    "Table": "unsharded"
+  }
+}
+
+# insert unsharded, invalid value for auto-inc
+"insert into unsharded_auto(id, val) values(18446744073709551616, 'aa')"
+"could not convert val: 18446744073709551616, pos: 0: strconv.ParseUint: parsing "18446744073709551616": value out of range"
+
+# insert unsharded, column present
+"insert into unsharded_auto(id, val) values(1, 'aa')"
+{
+  "Original": "insert into unsharded_auto(id, val) values(1, 'aa')",
+  "Instructions": {
+    "Opcode": "InsertUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "insert into unsharded_auto(id, val) values (:__seq0, 'aa')",
+    "Table": "unsharded_auto",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [
+        1
+      ]
+    }
+  }
+}
+
+# insert unsharded, column absent
+"insert into unsharded_auto(val) values('aa')"
+{
+  "Original": "insert into unsharded_auto(val) values('aa')",
+  "Instructions": {
+    "Opcode": "InsertUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "insert into unsharded_auto(val, id) values ('aa', :__seq0)",
+    "Table": "unsharded_auto",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [
+        null
+      ]
+    }
+  }
+}
+
+# insert unsharded, column absent
+"insert into unsharded_auto(val) values(false)"
+{
+  "Original": "insert into unsharded_auto(val) values(false)",
+  "Instructions": {
+    "Opcode": "InsertUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "insert into unsharded_auto(val, id) values (false, :__seq0)",
+    "Table": "unsharded_auto",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [
+        null
+      ]
+    }
+  }
+}
+
+# insert unsharded, multi-val
+"insert into unsharded_auto(id, val) values(1, 'aa'), (null, 'bb')"
+{
+  "Original": "insert into unsharded_auto(id, val) values(1, 'aa'), (null, 'bb')",
+  "Instructions": {
+    "Opcode": "InsertUnsharded",
+    "Keyspace": {
+      "Name": "main",
+      "Sharded": false
+    },
+    "Query": "insert into unsharded_auto(id, val) values (:__seq0, 'aa'), (:__seq1, 'bb')",
+    "Table": "unsharded_auto",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [
+        1,
+        null
+      ]
+    }
+  }
+}
+
+# insert no column list
+"insert into user values(1, 2, 3)"
+"no column list"
+
+# insert with mimatched column list
+"insert into user(id) values (1, 2)"
+"column list doesn't match values"
+
+# insert sharded, no values
+"insert into user values()"
+"no column list"
+
+# insert with one vindex
+"insert into user(id) values (1)"
+{
+  "Original": "insert into user(id) values (1)",
+  "Instructions": {
+    "Opcode": "InsertSharded",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "insert into user(id, Name, Costly) values (:_Id0, :_Name0, :_Costly0)",
+    "Values": [[
+      ":__seq0",
+      null,
+      null
+    ]],
+    "Table": "user",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [1]
+    },
+    "Prefix": "insert into user(id, Name, Costly) values ",
+    "Mid":["(:_Id0, :_Name0, :_Costly0)"]
+  }
+}
+
+# insert with non vindex
+"insert into user(nonid) values (2)"
+{
+  "Original": "insert into user(nonid) values (2)",
+  "Instructions": {
+    "Opcode": "InsertSharded",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "insert into user(nonid, Id, Name, Costly) values (2, :_Id0, :_Name0, :_Costly0)",
+    "Values": [[
+      ":__seq0",
+      null,
+      null
+    ]],
+    "Table": "user",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [null]
+    },
+    "Prefix": "insert into user(nonid, Id, Name, Costly) values ",
+    "Mid": ["(2, :_Id0, :_Name0, :_Costly0)"]
+  }
+}
+
+# insert with non vindex bool value
+"insert into user(nonid) values (true)"
+{
+  "Original": "insert into user(nonid) values (true)",
+  "Instructions": {
+    "Opcode": "InsertSharded",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "insert into user(nonid, Id, Name, Costly) values (true, :_Id0, :_Name0, :_Costly0)",
+    "Values": [[
+      ":__seq0",
+      null,
+      null
+    ]],
+    "Table": "user",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [null]
+    },
+    "Prefix": "insert into user(nonid, Id, Name, Costly) values ",
+    "Mid": ["(true, :_Id0, :_Name0, :_Costly0)"]
+  }
+}
+
+# insert with all vindexes supplied
+"insert into user(nonid, name, id) values (2, 'foo', 1)"
+{
+  "Original": "insert into user(nonid, name, id) values (2, 'foo', 1)",
+  "Instructions": {
+    "Opcode": "InsertSharded",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "insert into user(nonid, name, id, Costly) values (2, :_Name0, :_Id0, :_Costly0)",
+    "Values": [[
+      ":__seq0",
+      "foo",
+      null
+    ]],
+    "Table": "user",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [1]
+    },
+    "Prefix": "insert into user(nonid, name, id, Costly) values ",
+    "Mid": ["(2, :_Name0, :_Id0, :_Costly0)"]
+  }
+}
+
+# insert for non-vindex autoinc
+"insert into user_extra(nonid) values (2)"
+{
+  "Original": "insert into user_extra(nonid) values (2)",
+  "Instructions": {
+    "Opcode": "InsertSharded",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "insert into user_extra(nonid, user_id, extra_id) values (2, :_user_id0, :__seq0)",
+    "Values": [[
+      null
+    ]],
+    "Table": "user_extra",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [null]
+    },
+    "Prefix": "insert into user_extra(nonid, user_id, extra_id) values ",
+    "Mid": ["(2, :_user_id0, :__seq0)"]
+  }
+}
+
+# insert for non-compliant names
+"insert into `weird``name`(`a``b*c`, `b*c`) values(1, 2)"
+{
+  "Original": "insert into `weird``name`(`a``b*c`, `b*c`) values(1, 2)",
+  "Instructions": {
+    "Opcode": "InsertSharded",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "insert into `weird``name`(`a``b*c`, `b*c`) values (:_a_b_c0, 2)",
+    "Values": [
+      [
+        1
+      ]
+    ],
+    "Table": "weird`name",
+    "Prefix": "insert into `weird``name`(`a``b*c`, `b*c`) values ",
+    "Mid": [
+      "(:_a_b_c0, 2)"
+    ]
+  }
+}
+
+# insert for non-vindex autoinc, invalid value
+"insert into user_extra(nonid, extra_id) values (2, 18446744073709551616)"
+"could not convert val: 18446744073709551616, pos: 1: strconv.ParseUint: parsing "18446744073709551616": value out of range"
+
+# insert invalid index value
+"insert into music_extra(music_id, user_id) values(1, 18446744073709551616)"
+"could not convert val: 18446744073709551616, pos: 1: strconv.ParseUint: parsing "18446744073709551616": value out of range"
+
+# insert invalid index value
+"insert into music_extra(music_id, user_id) values(1, id)"
+"could not convert val: id, pos: 1: id is not a value"
+
+# insert invalid table
+"insert into noexist(music_id, user_id) values(1, 18446744073709551616)"
+"table noexist not found"
+
+# insert with multiple rows
+"insert into user(id) values (1), (2)"
+{
+  "Original": "insert into user(id) values (1), (2)",
+  "Instructions": {
+    "Opcode": "InsertSharded",
+    "Keyspace": {
+      "Name": "user",
+      "Sharded": true
+    },
+    "Query": "insert into user(id, Name, Costly) values (:_Id0, :_Name0, :_Costly0), (:_Id1, :_Name1, :_Costly1)",
+    "Values": [
+      [
+        ":__seq0",
+        null,
+        null
+      ],
+      [
+        ":__seq1",
+        null,
+        null
+      ]
+    ],
+    "Table": "user",
+    "Generate": {
+      "Opcode": "SelectUnsharded",
+      "Keyspace": {
+        "Name": "main",
+        "Sharded": false
+      },
+      "Query": "select next :n values from seq",
+      "Value": [1,2]
+    },
+    "Prefix": "insert into user(id, Name, Costly) values ",
+    "Mid": ["(:_Id0, :_Name0, :_Costly0)","(:_Id1, :_Name1, :_Costly1)"]
+  }
+}

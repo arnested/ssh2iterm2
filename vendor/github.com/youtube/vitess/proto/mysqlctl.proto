@@ -1,0 +1,34 @@
+// This file contains the service definition for making management API
+// calls to mysqlctld.
+
+syntax = "proto3";
+
+package mysqlctl;
+
+message StartRequest{
+  repeated string mysqld_args = 1;
+}
+
+message StartResponse{}
+
+message ShutdownRequest{
+  bool wait_for_mysqld = 1;
+}
+
+message ShutdownResponse{}
+
+message RunMysqlUpgradeRequest{}
+
+message RunMysqlUpgradeResponse{}
+
+message ReinitConfigRequest{}
+
+message ReinitConfigResponse{}
+
+// MysqlCtl is the service definition
+service MysqlCtl {
+  rpc Start(StartRequest) returns (StartResponse) {};
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse) {};
+  rpc RunMysqlUpgrade(RunMysqlUpgradeRequest) returns (RunMysqlUpgradeResponse) {};
+  rpc ReinitConfig(ReinitConfigRequest) returns (ReinitConfigResponse) {};
+}

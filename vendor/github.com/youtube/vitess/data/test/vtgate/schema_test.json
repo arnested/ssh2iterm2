@@ -1,0 +1,105 @@
+{
+  "Keyspaces": {
+    "user": {
+      "sharded": true,
+      "vindexes": {
+        "user_index": {
+          "type": "hash_test",
+          "owner": "user"
+        },
+        "music_user_map": {
+          "type": "lookup_test",
+          "owner": "music"
+        },
+        "name_user_map": {
+          "type": "multi",
+          "owner": "user"
+        },
+        "costly_map": {
+          "type": "costly",
+          "owner": "user"
+        }
+      },
+      "tables": {
+        "user": {
+          "column_vindexes": [
+            {
+              "column": "Id",
+              "name": "user_index"
+            },
+            {
+              "column": "Name",
+              "name": "name_user_map"
+            },
+            {
+              "column": "Costly",
+              "name": "costly_map"
+            }
+          ],
+          "auto_increment": {
+            "column": "id",
+            "sequence": "seq"
+          }
+        },
+        "user_extra": {
+          "column_vindexes": [
+            {
+              "column": "user_id",
+              "name": "user_index"
+            }
+          ],
+          "auto_increment": {
+            "column": "extra_id",
+            "sequence": "seq"
+          }
+        },
+        "music": {
+          "column_vindexes": [
+            {
+              "column": "user_id",
+              "name": "user_index"
+            },
+            {
+              "column": "id",
+              "name": "music_user_map"
+            }
+          ]
+        },
+        "music_extra": {
+          "column_vindexes": [
+            {
+              "column": "user_id",
+              "name": "user_index"
+            },
+            {
+              "column": "music_id",
+              "name": "music_user_map"
+            }
+          ]
+        },
+        "weird`name": {
+          "column_vindexes": [
+            {
+              "column": "a`b*c",
+              "name": "user_index"
+            }
+          ]
+        }
+      }
+    },
+    "main": {
+      "tables": {
+        "unsharded": {},
+        "unsharded_auto": {
+          "auto_increment": {
+            "column": "id",
+            "sequence": "seq"
+          }
+        },
+        "seq": {
+          "type": "sequence"
+        }
+      }
+    }
+  }
+}

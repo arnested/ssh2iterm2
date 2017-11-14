@@ -1,0 +1,35 @@
+# select
+"select * from a"
+{
+  "PlanID": "SELECT_STREAM",
+  "TableName": "a",
+  "FullQuery": "select * from a"
+}
+
+# select join
+"select * from a join b"
+{
+  "PlanID": "SELECT_STREAM",
+  "TableName": "",
+  "FullQuery": "select * from a join b"
+}
+
+# select for update
+"select * from a for update"
+"select with lock not allowed for streaming"
+
+# union
+"select * from a union select * from b"
+{
+  "PlanID": "SELECT_STREAM",
+  "TableName": "",
+  "FullQuery": "select * from a union select * from b"
+}
+
+# dml
+"update a set b = 1"
+"'update a set b = 1' not allowed for streaming"
+
+# syntax error
+"syntax error"
+"syntax error at position 7 near 'syntax'"

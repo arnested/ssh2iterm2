@@ -1,0 +1,18 @@
+---
+engines:
+  fixme:
+    enabled: true
+  gofmt:
+    enabled: true
+  golint:
+    enabled: true
+  govet:
+    enabled: true
+  markdownlint:
+    enabled: true
+  git-legal:
+    enabled: true
+ratings:
+  paths: []
+exclude_paths:
+  - vendor/
