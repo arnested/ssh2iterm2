@@ -74,7 +74,7 @@ func main() {
 
 	json, _ := json.MarshalIndent(profiles, "", "    ")
 
-	dynamicProfileFile, _ := homedir.Expand("~/.ssh/Library/Application Support/iTerm2/DynamicProfiles/ssh.json")
+	dynamicProfileFile, _ := homedir.Expand("~/Library/Application Support/iTerm2/DynamicProfiles/ssh.json")
 	ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
 }
 
