@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -39,7 +40,14 @@ type profilelist struct {
 
 func main() {
 	ns, _ := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
-	sshconfGlob, _ := homedir.Expand("~/.ssh/**/*.conf")
+
+	glob, present := os.LookupEnv("SSH2ITERM2_GLOB")
+
+	if !present {
+		glob = "~/.ssh/config"
+	}
+
+	sshconfGlob, _ := homedir.Expand(glob)
 	files, _ := filepath.Glob(sshconfGlob)
 
 	profiles := &profilelist{}
