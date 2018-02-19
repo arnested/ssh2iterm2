@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -80,7 +81,15 @@ func main() {
 		}
 	}
 
-	json, _ := json.MarshalIndent(profiles, "", "    ")
+	json, err := json.MarshalIndent(profiles, "", "    ")
+
+	if err != nil {
+		panic(err)
+	}
+
+	if 0 == len(profiles.Profiles) {
+		panic(errors.New("No profiles."))
+	}
 
 	dynamicProfileFile, _ := homedir.Expand("~/Library/Application Support/iTerm2/DynamicProfiles/ssh.json")
 	ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
