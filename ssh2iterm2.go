@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -36,7 +35,7 @@ type profile struct {
 type triggerlist []*trigger
 
 type profilelist struct {
-	Profiles []*profile
+	Profiles []*profile `json:",omitempty"`
 }
 
 func main() {
@@ -85,10 +84,6 @@ func main() {
 
 	if err != nil {
 		panic(err)
-	}
-
-	if 0 == len(profiles.Profiles) {
-		panic(errors.New("No profiles."))
 	}
 
 	dynamicProfileFile, _ := homedir.Expand("~/Library/Application Support/iTerm2/DynamicProfiles/ssh.json")
