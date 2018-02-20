@@ -86,7 +86,7 @@ func main() {
 		panic(err)
 	}
 
-	dynamicProfileFile, _ := homedir.Expand("~/Library/Application Support/iTerm2/DynamicProfiles/ssh.json")
+	dynamicProfileFile, _ := homedir.Expand("~/Library/Application Support/iTerm2/DynamicProfiles/ssh2iterm2.json")
 	ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
 }
 
