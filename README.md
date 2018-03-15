@@ -17,6 +17,11 @@ I.e. set `SSH2ITERM2_GLOB=~/.ssh/config.d/*.conf` to run through all
 
 The glob pattern should follow Gos [path/filepath patterns](https://golang.org/pkg/path/filepath/#Match).
 
+## How to run
+
+Just run the binary without any arguments in whatever directory you
+like.
+
 ## The generated dynamic profile
 
 The generated dynamic profile has some features/caveats (they suit me
