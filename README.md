@@ -3,6 +3,7 @@
 [![Build Status](https://travis-ci.org/arnested/ssh2iterm2.svg?branch=master)](https://travis-ci.org/arnested/ssh2iterm2)
 [![release](https://img.shields.io/github/release/arnested/ssh2iterm2.svg)](https://github.com/arnested/ssh2iterm2/releases/latest)
 [![Go Report Card](https://goreportcard.com/badge/github.com/arnested/ssh2iterm2)](https://goreportcard.com/report/github.com/arnested/ssh2iterm2)
+[![CLA assistant](https://cla-assistant.io/readme/badge/arnested/ssh2iterm2)](https://cla-assistant.io/arnested/ssh2iterm2)
 
 Converts your `~/.ssh/config` to Dynamic profiles in iTerm2.
 
