@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -50,6 +51,11 @@ func main() {
 	sshconfGlob, _ := homedir.Expand(glob)
 	files, _ := filepath.Glob(sshconfGlob)
 
+	ssh, err := exec.LookPath("ssh")
+	if err != nil {
+		panic(err)
+	}
+
 	profiles := &profilelist{}
 
 	for _, file := range files {
@@ -65,7 +71,7 @@ func main() {
 						Badge:         name,
 						GUID:          uuid,
 						Name:          name,
-						Command:       fmt.Sprintf("sh -c 'PATH=/usr/local/bin:$PATH ssh %s'", name),
+						Command:       fmt.Sprintf("%s %s", ssh, name),
 						CustomCommand: "Yes",
 						Triggers: &triggerlist{&trigger{
 							Partial:   true,

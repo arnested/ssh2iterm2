@@ -28,12 +28,13 @@ like.
 The generated dynamic profile has some features/caveats (they suit me
 well :-)
 
-* The command is not a direct call to `ssh`. That is because iTerm2
-  doesn't have `/usr/local/bin` in its path. Instead we wrap it in a
-  call to `sh`:
+* The command calls `ssh` with an absolute path that is looked up when
+  generating the dynamic profile. That is because iTerm2 doesn't have
+  `/usr/local/bin` in its path and we would not be able to find a ssh
+  installed by i.e. [Homebrew](https://brew.sh) otherwise.
 
   ```
-  sh -c 'PATH=/usr/local/bin:$PATH ssh <host>'
+  /usr/local/bin/ssh <host>
   ```
 
 * We add the host as a badge
