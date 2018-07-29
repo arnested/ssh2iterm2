@@ -3,31 +3,44 @@
 
 [[projects]]
   branch = "master"
+  digest = "1:3ae02f30f9f7a0c3f57f8178c44c309141c75a3f0e3350d90cbd51bd98fd74bb"
   name = "github.com/mikkeloscar/sshconfig"
   packages = ["."]
-  revision = "501286685510343458a6e698a18174f5242749f3"
+  pruneopts = ""
+  revision = "056592cb6962e83d208af2e58d90c3759ba09825"
 
 [[projects]]
   branch = "master"
+  digest = "1:59d11e81d6fdd12a771321696bb22abdd9a94d26ac864787e98c9b419e428734"
   name = "github.com/mitchellh/go-homedir"
   packages = ["."]
+  pruneopts = ""
   revision = "b8bc1bf767474819792c23f32d8286a45736f1c6"
 
 [[projects]]
+  digest = "1:6b55df4b0517a459af9d3879c99330af4367adcf45f3d0d37ded80a6272ae057"
   name = "github.com/satori/go.uuid"
   packages = ["."]
+  pruneopts = ""
   revision = "879c5887cd475cd7864858769793b2ceb0d44feb"
   version = "v1.1.0"
 
 [[projects]]
+  digest = "1:bb4bd8edc7a06779b532e7eaeb23236d6224a188c66c0ec83d7394ec9e51527d"
   name = "github.com/youtube/vitess"
   packages = ["go/ioutil2"]
+  pruneopts = ""
   revision = "89cc312b4da3004d3b5382cf2b37d70e901b1c36"
   version = "v2.1.1"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "eedd0dcf1261e198c1a0586e6598b70ced5fd6d8cfbee62efada4407c52bb037"
+  input-imports = [
+    "github.com/mikkeloscar/sshconfig",
+    "github.com/mitchellh/go-homedir",
+    "github.com/satori/go.uuid",
+    "github.com/youtube/vitess/go/ioutil2",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
