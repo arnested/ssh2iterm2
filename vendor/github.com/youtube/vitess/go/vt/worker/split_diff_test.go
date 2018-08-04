@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -12,19 +24,19 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/mysqlctl/tmutils"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/vttablet/grpcqueryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice/fakes"
-	"github.com/youtube/vitess/go/vt/wrangler"
-	"github.com/youtube/vitess/go/vt/wrangler/testlib"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/mysqlctl/tmutils"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vttablet/grpcqueryservice"
+	"vitess.io/vitess/go/vt/vttablet/queryservice/fakes"
+	"vitess.io/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/vt/wrangler/testlib"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	vschemapb "github.com/youtube/vitess/go/vt/proto/vschema"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vschemapb "vitess.io/vitess/go/vt/proto/vschema"
 )
 
 // destinationTabletServer is a local QueryService implementation to
@@ -36,7 +48,7 @@ type destinationTabletServer struct {
 	excludedTable string
 }
 
-func (sq *destinationTabletServer) StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions, callback func(reply *sqltypes.Result) error) error {
+func (sq *destinationTabletServer) StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, options *querypb.ExecuteOptions, callback func(reply *sqltypes.Result) error) error {
 	if strings.Contains(sql, sq.excludedTable) {
 		sq.t.Errorf("Split Diff operation on destination should skip the excluded table: %v query: %v", sq.excludedTable, sql)
 	}
@@ -77,9 +89,9 @@ func (sq *destinationTabletServer) StreamExecute(ctx context.Context, target *qu
 		if err := callback(&sqltypes.Result{
 			Rows: [][]sqltypes.Value{
 				{
-					sqltypes.MakeString([]byte(fmt.Sprintf("%v", i))),
-					sqltypes.MakeString([]byte(fmt.Sprintf("Text for %v", i))),
-					sqltypes.MakeString([]byte(fmt.Sprintf("%v", ksids[i%2]))),
+					sqltypes.NewVarBinary(fmt.Sprintf("%v", i)),
+					sqltypes.NewVarBinary(fmt.Sprintf("Text for %v", i)),
+					sqltypes.NewVarBinary(fmt.Sprintf("%v", ksids[i%2])),
 				},
 			},
 		}); err != nil {
@@ -98,7 +110,7 @@ type sourceTabletServer struct {
 	v3            bool
 }
 
-func (sq *sourceTabletServer) StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions, callback func(reply *sqltypes.Result) error) error {
+func (sq *sourceTabletServer) StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, options *querypb.ExecuteOptions, callback func(reply *sqltypes.Result) error) error {
 	if strings.Contains(sql, sq.excludedTable) {
 		sq.t.Errorf("Split Diff operation on source should skip the excluded table: %v query: %v", sq.excludedTable, sql)
 	}
@@ -142,9 +154,9 @@ func (sq *sourceTabletServer) StreamExecute(ctx context.Context, target *querypb
 		if err := callback(&sqltypes.Result{
 			Rows: [][]sqltypes.Value{
 				{
-					sqltypes.MakeString([]byte(fmt.Sprintf("%v", i))),
-					sqltypes.MakeString([]byte(fmt.Sprintf("Text for %v", i))),
-					sqltypes.MakeString([]byte(fmt.Sprintf("%v", ksids[i%2]))),
+					sqltypes.NewVarBinary(fmt.Sprintf("%v", i)),
+					sqltypes.NewVarBinary(fmt.Sprintf("Text for %v", i)),
+					sqltypes.NewVarBinary(fmt.Sprintf("%v", ksids[i%2])),
 				},
 			},
 		}); err != nil {
@@ -211,11 +223,6 @@ func testSplitDiff(t *testing.T, v3 bool) {
 	leftRdonly2 := testlib.NewFakeTablet(t, wi.wr, "cell1", 12,
 		topodatapb.TabletType_RDONLY, nil, testlib.TabletKeyspaceShard(t, "ks", "-40"))
 
-	for _, ft := range []*testlib.FakeTablet{sourceMaster, sourceRdonly1, sourceRdonly2, leftMaster, leftRdonly1, leftRdonly2} {
-		ft.StartActionLoop(t, wi.wr)
-		defer ft.StopActionLoop(t)
-	}
-
 	// add the topo and schema data we'll need
 	if err := ts.CreateShard(ctx, "ks", "80-"); err != nil {
 		t.Fatalf("CreateShard(\"-80\") failed: %v", err)
@@ -273,6 +280,12 @@ func testSplitDiff(t *testing.T, v3 bool) {
 			StreamHealthQueryService: qs,
 			excludedTable:            excludedTable,
 		})
+	}
+
+	// Start action loop after having registered all RPC services.
+	for _, ft := range []*testlib.FakeTablet{sourceMaster, sourceRdonly1, sourceRdonly2, leftMaster, leftRdonly1, leftRdonly2} {
+		ft.StartActionLoop(t, wi.wr)
+		defer ft.StopActionLoop(t)
 	}
 
 	// Run the vtworker command.

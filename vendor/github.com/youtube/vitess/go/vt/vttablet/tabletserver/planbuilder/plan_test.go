@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package planbuilder
 
@@ -18,46 +30,46 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/youtube/vitess/go/testfiles"
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/schema"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/testfiles"
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/tableacl"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
 )
 
-// toJSON returns a JSON of the given Plan.
-// Except for "TableName", it's a 1:1 copy of the fields of "Plan".
-// (The JSON output is used in the tests to compare it against the data in the
-// golden files e.g. data/test/tabletserver/exec_cases.txt.)
-func toJSON(p *Plan) ([]byte, error) {
+// MarshalJSON returns a JSON of the given Plan.
+// This is only for testing.
+func (p *Plan) MarshalJSON() ([]byte, error) {
 	mplan := struct {
-		PlanID               PlanType
-		Reason               ReasonType             `json:",omitempty"`
-		TableName            sqlparser.TableIdent   `json:",omitempty"`
-		FieldQuery           *sqlparser.ParsedQuery `json:",omitempty"`
-		FullQuery            *sqlparser.ParsedQuery `json:",omitempty"`
-		OuterQuery           *sqlparser.ParsedQuery `json:",omitempty"`
-		Subquery             *sqlparser.ParsedQuery `json:",omitempty"`
-		UpsertQuery          *sqlparser.ParsedQuery `json:",omitempty"`
-		ColumnNumbers        []int                  `json:",omitempty"`
-		PKValues             []interface{}          `json:",omitempty"`
-		SecondaryPKValues    []interface{}          `json:",omitempty"`
-		WhereClause          *sqlparser.ParsedQuery `json:",omitempty"`
-		SubqueryPKColumns    []int                  `json:",omitempty"`
-		MessageReloaderQuery *sqlparser.ParsedQuery `json:",omitempty"`
+		PlanID            PlanType
+		Reason            ReasonType             `json:",omitempty"`
+		TableName         sqlparser.TableIdent   `json:",omitempty"`
+		Permissions       []Permission           `json:",omitempty"`
+		FieldQuery        *sqlparser.ParsedQuery `json:",omitempty"`
+		FullQuery         *sqlparser.ParsedQuery `json:",omitempty"`
+		OuterQuery        *sqlparser.ParsedQuery `json:",omitempty"`
+		Subquery          *sqlparser.ParsedQuery `json:",omitempty"`
+		UpsertQuery       *sqlparser.ParsedQuery `json:",omitempty"`
+		ColumnNumbers     []int                  `json:",omitempty"`
+		PKValues          []sqltypes.PlanValue   `json:",omitempty"`
+		SecondaryPKValues []sqltypes.PlanValue   `json:",omitempty"`
+		WhereClause       *sqlparser.ParsedQuery `json:",omitempty"`
+		SubqueryPKColumns []int                  `json:",omitempty"`
 	}{
-		PlanID:               p.PlanID,
-		Reason:               p.Reason,
-		TableName:            p.TableName(),
-		FieldQuery:           p.FieldQuery,
-		FullQuery:            p.FullQuery,
-		OuterQuery:           p.OuterQuery,
-		Subquery:             p.Subquery,
-		UpsertQuery:          p.UpsertQuery,
-		ColumnNumbers:        p.ColumnNumbers,
-		PKValues:             p.PKValues,
-		SecondaryPKValues:    p.SecondaryPKValues,
-		WhereClause:          p.WhereClause,
-		SubqueryPKColumns:    p.SubqueryPKColumns,
-		MessageReloaderQuery: p.MessageReloaderQuery,
+		PlanID:            p.PlanID,
+		Reason:            p.Reason,
+		TableName:         p.TableName(),
+		Permissions:       p.Permissions,
+		FieldQuery:        p.FieldQuery,
+		FullQuery:         p.FullQuery,
+		OuterQuery:        p.OuterQuery,
+		Subquery:          p.Subquery,
+		UpsertQuery:       p.UpsertQuery,
+		ColumnNumbers:     p.ColumnNumbers,
+		PKValues:          p.PKValues,
+		SecondaryPKValues: p.SecondaryPKValues,
+		WhereClause:       p.WhereClause,
+		SubqueryPKColumns: p.SubqueryPKColumns,
 	}
 	return json.Marshal(&mplan)
 }
@@ -65,12 +77,17 @@ func toJSON(p *Plan) ([]byte, error) {
 func TestPlan(t *testing.T) {
 	testSchema := loadSchema("schema_test.json")
 	for tcase := range iterateExecFile("exec_cases.txt") {
+		if strings.Contains(tcase.options, "PassthroughDMLs") {
+			PassthroughDMLs = true
+		}
 		plan, err := Build(tcase.input, testSchema)
+		PassthroughDMLs = false
+
 		var out string
 		if err != nil {
 			out = err.Error()
 		} else {
-			bout, err := toJSON(plan)
+			bout, err := json.Marshal(plan)
 			if err != nil {
 				t.Fatalf("Error marshalling %v: %v", plan, err)
 			}
@@ -113,7 +130,7 @@ func TestCustom(t *testing.T) {
 				if err != nil {
 					out = err.Error()
 				} else {
-					bout, err := toJSON(plan)
+					bout, err := json.Marshal(plan)
 					if err != nil {
 						t.Fatalf("Error marshalling %v: %v", plan, err)
 					}
@@ -135,7 +152,7 @@ func TestStreamPlan(t *testing.T) {
 		if err != nil {
 			out = err.Error()
 		} else {
-			bout, err := toJSON(plan)
+			bout, err := json.Marshal(plan)
 			if err != nil {
 				t.Fatalf("Error marshalling %v: %v", plan, err)
 			}
@@ -162,6 +179,43 @@ func TestDDLPlan(t *testing.T) {
 	}
 }
 
+func TestMessageStreamingPlan(t *testing.T) {
+	testSchema := loadSchema("schema_test.json")
+	plan, err := BuildMessageStreaming("msg", testSchema)
+	if err != nil {
+		t.Error(err)
+	}
+	bout, _ := json.Marshal(plan)
+	planJSON := string(bout)
+
+	wantPlan := &Plan{
+		PlanID: PlanMessageStream,
+		Table:  testSchema["msg"],
+		Permissions: []Permission{{
+			TableName: "msg",
+			Role:      tableacl.WRITER,
+		}},
+	}
+	bout, _ = json.Marshal(wantPlan)
+	wantJSON := string(bout)
+
+	if planJSON != wantJSON {
+		t.Errorf("BuildMessageStreaming: \n%s, want\n%s", planJSON, wantJSON)
+	}
+
+	_, err = BuildMessageStreaming("absent", testSchema)
+	want := "table absent not found in schema"
+	if err == nil || err.Error() != want {
+		t.Errorf("BuildMessageStreaming(absent) error: %v, want %s", err, want)
+	}
+
+	_, err = BuildMessageStreaming("a", testSchema)
+	want = "'a' is not a message table"
+	if err == nil || err.Error() != want {
+		t.Errorf("BuildMessageStreaming(absent) error: %v, want %s", err, want)
+	}
+}
+
 func matchString(t *testing.T, line int, expected interface{}, actual string) {
 	if expected != nil {
 		if expected.(string) != actual {
@@ -175,7 +229,7 @@ func loadSchema(name string) map[string]*schema.Table {
 	if err != nil {
 		panic(err)
 	}
-	tables := make([]*schema.Table, 0, 8)
+	tables := make([]*schema.Table, 0, 10)
 	err = json.Unmarshal(b, &tables)
 	if err != nil {
 		panic(err)
@@ -188,10 +242,11 @@ func loadSchema(name string) map[string]*schema.Table {
 }
 
 type testCase struct {
-	file   string
-	lineno int
-	input  string
-	output string
+	file    string
+	lineno  int
+	options string
+	input   string
+	output  string
 }
 
 func iterateExecFile(name string) (testCaseIterator chan testCase) {
@@ -206,6 +261,7 @@ func iterateExecFile(name string) (testCaseIterator chan testCase) {
 
 		r := bufio.NewReader(fd)
 		lineno := 0
+		options := ""
 		for {
 			binput, err := r.ReadBytes('\n')
 			if err != nil {
@@ -219,6 +275,11 @@ func iterateExecFile(name string) (testCaseIterator chan testCase) {
 			input := string(binput)
 			if input == "" || input == "\n" || input[0] == '#' || strings.HasPrefix(input, "Length:") {
 				//fmt.Printf("%s\n", input)
+				continue
+			}
+
+			if strings.HasPrefix(input, "options:") {
+				options = input[8:]
 				continue
 			}
 			err = json.Unmarshal(binput, &input)
@@ -249,7 +310,8 @@ func iterateExecFile(name string) (testCaseIterator chan testCase) {
 					break
 				}
 			}
-			testCaseIterator <- testCase{name, lineno, input, string(output)}
+			testCaseIterator <- testCase{name, lineno, options, input, string(output)}
+			options = ""
 		}
 	}()
 	return testCaseIterator

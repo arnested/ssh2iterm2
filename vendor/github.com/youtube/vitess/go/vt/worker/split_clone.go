@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -14,22 +26,22 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/event"
-	"github.com/youtube/vitess/go/stats"
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/throttler"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/topotools"
-	"github.com/youtube/vitess/go/vt/vtgate/vindexes"
-	"github.com/youtube/vitess/go/vt/worker/events"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/event"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/binlog/binlogplayer"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/throttler"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools"
+	"vitess.io/vitess/go/vt/vtgate/vindexes"
+	"vitess.io/vitess/go/vt/worker/events"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // cloneType specifies whether it is a horizontal resharding or a vertical split.
@@ -340,7 +352,7 @@ func (scw *SplitCloneWorker) StatusAsText() string {
 	switch state {
 	case WorkerStateCloneOnline:
 		result += "Running:\n"
-		result += "Copying from: " + scw.formatOnlineSources() + "\n"
+		result += "Comparing source and destination using: " + scw.formatOnlineSources() + "\n"
 		statuses, eta := scw.tableStatusListOnline.format()
 		result += "ETA: " + eta.String() + "\n"
 		result += strings.Join(statuses, "\n")
@@ -542,8 +554,8 @@ func (scw *SplitCloneWorker) init(ctx context.Context) error {
 	}
 
 	// Initialize healthcheck and add destination shards to it.
-	scw.healthCheck = discovery.NewHealthCheck(*remoteActionsTimeout, *healthcheckRetryDelay, *healthCheckTimeout)
-	scw.tsc = discovery.NewTabletStatsCacheDoNotSetListener(scw.cell)
+	scw.healthCheck = discovery.NewHealthCheck(*healthcheckRetryDelay, *healthCheckTimeout)
+	scw.tsc = discovery.NewTabletStatsCacheDoNotSetListener(scw.wr.TopoServer(), scw.cell)
 	// We set sendDownEvents=true because it's required by TabletStatsCache.
 	scw.healthCheck.SetListener(scw, true /* sendDownEvents */)
 
@@ -737,7 +749,7 @@ func (scw *SplitCloneWorker) findDestinationMasters(ctx context.Context) error {
 	for _, si := range scw.destinationShards {
 		waitCtx, waitCancel := context.WithTimeout(ctx, *waitForHealthyTabletsTimeout)
 		defer waitCancel()
-		if err := scw.tsc.WaitForTablets(waitCtx, scw.cell, si.Keyspace(), si.ShardName(), []topodatapb.TabletType{topodatapb.TabletType_MASTER}); err != nil {
+		if err := scw.tsc.WaitForTablets(waitCtx, scw.cell, si.Keyspace(), si.ShardName(), topodatapb.TabletType_MASTER); err != nil {
 			return fmt.Errorf("cannot find MASTER tablet for destination shard for %v/%v (in cell: %v): %v", si.Keyspace(), si.ShardName(), scw.cell, err)
 		}
 		masters := scw.tsc.GetHealthyTabletStats(si.Keyspace(), si.ShardName(), topodatapb.TabletType_MASTER)
@@ -765,6 +777,11 @@ func (scw *SplitCloneWorker) findDestinationMasters(ctx context.Context) error {
 func (scw *SplitCloneWorker) waitForTablets(ctx context.Context, shardInfos []*topo.ShardInfo, timeout time.Duration) error {
 	var wg sync.WaitGroup
 	rec := concurrency.AllErrorRecorder{}
+
+	if len(shardInfos) > 0 {
+		scw.wr.Logger().Infof("Waiting %v for %d %s/%s RDONLY tablet(s)", timeout, scw.minHealthyRdonlyTablets, shardInfos[0].Keyspace(), shardInfos[0].ShardName())
+	}
+
 	for _, si := range shardInfos {
 		wg.Add(1)
 		go func(keyspace, shard string) {
@@ -809,14 +826,14 @@ func (scw *SplitCloneWorker) clone(ctx context.Context, state StatusWorkerState)
 		}
 		firstSourceTablet = tablets[0].Tablet
 	}
-	var statsCounters []*stats.Counters
+	var statsCounters []*stats.CountersWithSingleLabel
 	var tableStatusList *tableStatusList
 	switch state {
 	case WorkerStateCloneOnline:
-		statsCounters = []*stats.Counters{statsOnlineInsertsCounters, statsOnlineUpdatesCounters, statsOnlineDeletesCounters, statsOnlineEqualRowsCounters}
+		statsCounters = []*stats.CountersWithSingleLabel{statsOnlineInsertsCounters, statsOnlineUpdatesCounters, statsOnlineDeletesCounters, statsOnlineEqualRowsCounters}
 		tableStatusList = scw.tableStatusListOnline
 	case WorkerStateCloneOffline:
-		statsCounters = []*stats.Counters{statsOfflineInsertsCounters, statsOfflineUpdatesCounters, statsOfflineDeletesCounters, statsOfflineEqualRowsCounters}
+		statsCounters = []*stats.CountersWithSingleLabel{statsOfflineInsertsCounters, statsOfflineUpdatesCounters, statsOfflineDeletesCounters, statsOfflineEqualRowsCounters}
 		tableStatusList = scw.tableStatusListOffline
 	}
 
@@ -842,10 +859,11 @@ func (scw *SplitCloneWorker) clone(ctx context.Context, state StatusWorkerState)
 	var firstError error
 
 	ctx, cancelCopy := context.WithCancel(ctx)
+	defer cancelCopy()
 	processError := func(format string, args ...interface{}) {
-		scw.wr.Logger().Errorf(format, args...)
 		mu.Lock()
 		if firstError == nil {
+			scw.wr.Logger().Errorf(format, args...)
 			firstError = fmt.Errorf(format, args...)
 			cancelCopy()
 		}
@@ -919,13 +937,19 @@ func (scw *SplitCloneWorker) clone(ctx context.Context, state StatusWorkerState)
 				sema.Acquire()
 				defer sema.Release()
 
+				if err := checkDone(ctx); err != nil {
+					processError("%v: Context expired while this thread was waiting for its turn. Context error: %v", errPrefix, err)
+					return
+				}
+
 				tableStatusList.threadStarted(tableIndex)
+				defer tableStatusList.threadDone(tableIndex)
 
 				if state == WorkerStateCloneOnline {
 					// Wait for enough healthy tablets (they might have become unhealthy
 					// and their replication lag might have increased since we started.)
 					if err := scw.waitForTablets(ctx, scw.sourceShards, *retryDuration); err != nil {
-						processError("%v: No healthy source tablets found (gave up after %v): %v", errPrefix, *retryDuration, err)
+						processError("%v: No healthy source tablets found (gave up after %v): %v", errPrefix, time.Since(start), err)
 						return
 					}
 				}
@@ -950,7 +974,7 @@ func (scw *SplitCloneWorker) clone(ctx context.Context, state StatusWorkerState)
 					}
 					sourceResultReader, err := NewRestartableResultReader(ctx, scw.wr.Logger(), tp, td, chunk, allowMultipleRetries)
 					if err != nil {
-						processError("%v: NewRestartableResultReader for source: %v failed", errPrefix, tp.description())
+						processError("%v: NewRestartableResultReader for source: %v failed: %v", errPrefix, tp.description(), err)
 						return
 					}
 					defer sourceResultReader.Close(ctx)
@@ -961,7 +985,7 @@ func (scw *SplitCloneWorker) clone(ctx context.Context, state StatusWorkerState)
 				// and their replication lag might have increased due to a previous
 				// chunk pipeline.)
 				if err := scw.waitForTablets(ctx, scw.destinationShards, *retryDuration); err != nil {
-					processError("%v: No healthy destination tablets found (gave up after %v): ", errPrefix, *retryDuration, err)
+					processError("%v: No healthy destination tablets found (gave up after %v): ", errPrefix, time.Since(start), err)
 					return
 				}
 
@@ -1016,8 +1040,6 @@ func (scw *SplitCloneWorker) clone(ctx context.Context, state StatusWorkerState)
 					processError("%v: RowDiffer2 failed: %v", errPrefix, err)
 					return
 				}
-
-				tableStatusList.threadDone(tableIndex)
 			}(td, tableIndex, c)
 		}
 	}

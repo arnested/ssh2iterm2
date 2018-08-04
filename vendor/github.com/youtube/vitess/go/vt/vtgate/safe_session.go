@@ -1,17 +1,30 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package vtgate
 
 import (
 	"sync"
 
-	"github.com/youtube/vitess/go/vt/vterrors"
+	"github.com/golang/protobuf/proto"
+	"vitess.io/vitess/go/vt/vterrors"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	vtgatepb "github.com/youtube/vitess/go/vt/proto/vtgate"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vtgatepb "vitess.io/vitess/go/vt/proto/vtgate"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 // SafeSession is a mutex-protected version of the Session.
@@ -19,14 +32,84 @@ import (
 // (the use pattern is 'Find', if not found, then 'Append',
 // for a single shard)
 type SafeSession struct {
-	mu           sync.Mutex
-	mustRollback bool
+	mu              sync.Mutex
+	mustRollback    bool
+	autocommitState autocommitState
 	*vtgatepb.Session
 }
+
+// autocommitState keeps track of whether a single round-trip
+// commit to vttablet is possible. It starts as autocommitable
+// if we started a transaction because of the autocommit flag
+// being set. Otherwise, it starts as notAutocommitable.
+// If execute is recursively called using the same session,
+// like from a vindex, we will already be in a transaction,
+// and this should cause the state to become notAutocommitable.
+//
+// SafeSession lets you request a commit token, which will
+// be issued if the state is autocommitable, and ShardSessions
+// is empty, implying that no intermediate transactions were started.
+// If so, the state transitions to autocommited, which is terminal.
+// If the token is succesfully issued, the caller has to perform
+// the commit. If a token cannot be issued, then a traditional
+// commit has to be performed at the outermost level where
+// the autocommitable transition happened.
+type autocommitState int
+
+const (
+	notAutocommittable = autocommitState(iota)
+	autocommittable
+	autocommitted
+)
 
 // NewSafeSession returns a new SafeSession based on the Session
 func NewSafeSession(sessn *vtgatepb.Session) *SafeSession {
 	return &SafeSession{Session: sessn}
+}
+
+// NewAutocommitSession returns a SafeSession based on the original
+// session, but with autocommit enabled.
+func NewAutocommitSession(sessn *vtgatepb.Session) *SafeSession {
+	newSession := proto.Clone(sessn).(*vtgatepb.Session)
+	newSession.InTransaction = false
+	newSession.ShardSessions = nil
+	newSession.Autocommit = true
+	return NewSafeSession(newSession)
+}
+
+// SetAutocommitable sets the state to autocommitable if true.
+// Otherwise, it's notAutocommitable.
+func (session *SafeSession) SetAutocommitable(flag bool) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	if session.autocommitState == autocommitted {
+		panic("BUG: SetAutocommitable: unexpected autocommit state")
+	}
+
+	if flag {
+		session.autocommitState = autocommittable
+	} else {
+		session.autocommitState = notAutocommittable
+	}
+}
+
+// AutocommitApproval returns true if we can perform a single round-trip
+// autocommit. If so, the caller is responsible for commiting their
+// transaction.
+func (session *SafeSession) AutocommitApproval() bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	if session.autocommitState == autocommitted {
+		panic("BUG: AutocommitToken: unexpected autocommit state")
+	}
+
+	if session.autocommitState == autocommittable && len(session.ShardSessions) == 0 {
+		session.autocommitState = autocommitted
+		return true
+	}
+	return false
 }
 
 // InTransaction returns true if we are in a transaction
@@ -55,16 +138,27 @@ func (session *SafeSession) Find(keyspace, shard string, tabletType topodatapb.T
 }
 
 // Append adds a new ShardSession
-func (session *SafeSession) Append(shardSession *vtgatepb.Session_ShardSession) error {
+func (session *SafeSession) Append(shardSession *vtgatepb.Session_ShardSession, txMode vtgatepb.TransactionMode) error {
 	session.mu.Lock()
 	defer session.mu.Unlock()
+
+	if session.autocommitState == autocommitted {
+		panic("BUG: SafeSession.Append: unexpected autocommit state")
+	}
+
 	// Always append, in order for rollback to succeed.
 	session.ShardSessions = append(session.ShardSessions, shardSession)
-	if session.SingleDb && len(session.ShardSessions) > 1 {
+	if session.isSingleDB(txMode) && len(session.ShardSessions) > 1 {
 		session.mustRollback = true
 		return vterrors.Errorf(vtrpcpb.Code_INVALID_ARGUMENT, "multi-db transaction attempted: %v", session.ShardSessions)
 	}
 	return nil
+}
+
+func (session *SafeSession) isSingleDB(txMode vtgatepb.TransactionMode) bool {
+	return session.SingleDb ||
+		session.TransactionMode == vtgatepb.TransactionMode_SINGLE ||
+		(session.TransactionMode == vtgatepb.TransactionMode_UNSPECIFIED && txMode == vtgatepb.TransactionMode_SINGLE)
 }
 
 // SetRollback sets the flag indicating that the transaction must be rolled back.
@@ -95,6 +189,9 @@ func (session *SafeSession) Reset() {
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	session.mustRollback = false
+	session.autocommitState = notAutocommittable
 	session.Session.InTransaction = false
+	session.SingleDb = false
 	session.ShardSessions = nil
 }

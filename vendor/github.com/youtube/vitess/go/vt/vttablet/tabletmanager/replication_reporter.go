@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package tabletmanager
 
 import (
@@ -6,11 +22,12 @@ import (
 	"html/template"
 	"time"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/health"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
+	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/vt/health"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/mysqlctl"
 )
 
 var (
@@ -36,7 +53,7 @@ func (r *replicationReporter) Report(isSlaveType, shouldQueryServiceBeRunning bo
 	}
 
 	status, statusErr := r.agent.MysqlDaemon.SlaveStatus()
-	if statusErr == mysqlctl.ErrNotSlave ||
+	if statusErr == mysql.ErrNotSlave ||
 		(statusErr == nil && !status.SlaveSQLRunning && !status.SlaveIORunning) {
 		// MySQL is up, but slave is either not configured or not running.
 		// Both SQL and IO threads are stopped, so it's probably either
@@ -44,14 +61,18 @@ func (r *replicationReporter) Report(isSlaveType, shouldQueryServiceBeRunning bo
 		if !r.agent.slaveStopped() {
 			// As far as we've been told, it isn't stopped on purpose,
 			// so let's try to start it.
-			log.Infof("Slave is stopped. Trying to reconnect to master...")
-			ctx, cancel := context.WithTimeout(r.agent.batchCtx, 5*time.Second)
-			if err := repairReplication(ctx, r.agent); err != nil {
-				log.Infof("Failed to reconnect to master: %v", err)
+			if *mysqlctl.DisableActiveReparents {
+				log.Infof("Slave is stopped. Running with --disable_active_reparents so will not try to reconnect to master...")
+			} else {
+				log.Infof("Slave is stopped. Trying to reconnect to master...")
+				ctx, cancel := context.WithTimeout(r.agent.batchCtx, 5*time.Second)
+				if err := repairReplication(ctx, r.agent); err != nil {
+					log.Infof("Failed to reconnect to master: %v", err)
+				}
+				cancel()
+				// Check status again.
+				status, statusErr = r.agent.MysqlDaemon.SlaveStatus()
 			}
-			cancel()
-			// Check status again.
-			status, statusErr = r.agent.MysqlDaemon.SlaveStatus()
 		}
 	}
 	if statusErr != nil {
@@ -88,6 +109,10 @@ func (r *replicationReporter) HTMLName() template.HTML {
 // repairReplication tries to connect this slave to whoever is
 // the current master of the shard, and start replicating.
 func repairReplication(ctx context.Context, agent *ActionAgent) error {
+	if *mysqlctl.DisableActiveReparents {
+		return fmt.Errorf("can't repair replication with --disable_active_reparents")
+	}
+
 	ts := agent.TopoServer
 	tablet := agent.Tablet()
 	si, err := ts.GetShard(ctx, tablet.Keyspace, tablet.Shard)

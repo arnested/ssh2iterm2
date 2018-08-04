@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // mysqlctl initializes and controls mysqld with Vitess-specific configuration.
 package main
@@ -11,16 +23,16 @@ import (
 	"os"
 	"time"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/exit"
-	"github.com/youtube/vitess/go/flagutil"
-	"github.com/youtube/vitess/go/mysqlconn/replication"
-	"github.com/youtube/vitess/go/netutil"
-	"github.com/youtube/vitess/go/vt/dbconfigs"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
+	"vitess.io/vitess/go/exit"
+	"vitess.io/vitess/go/flagutil"
+	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/netutil"
+	"vitess.io/vitess/go/vt/dbconfigs"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/mysqlctl"
 )
 
 var (
@@ -37,6 +49,21 @@ const (
 	// starts and stops mysqld, and that is only done with the dba user.
 	dbconfigFlags = dbconfigs.DbaConfig
 )
+
+func initConfigCmd(subFlags *flag.FlagSet, args []string) error {
+	subFlags.Parse(args)
+
+	// Generate my.cnf from scratch and use it to find mysqld.
+	mysqld, err := mysqlctl.CreateMysqld(uint32(*tabletUID), *mysqlSocket, int32(*mysqlPort), dbconfigFlags)
+	if err != nil {
+		return fmt.Errorf("failed to initialize mysql config: %v", err)
+	}
+	defer mysqld.Close()
+	if err := mysqld.InitConfig(); err != nil {
+		return fmt.Errorf("failed to init mysql config: %v", err)
+	}
+	return nil
+}
 
 func initCmd(subFlags *flag.FlagSet, args []string) error {
 	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "how long to wait for startup")
@@ -138,30 +165,30 @@ func positionCmd(subFlags *flag.FlagSet, args []string) error {
 		return fmt.Errorf("not enough arguments for position operation")
 	}
 
-	pos1, err := replication.DecodePosition(args[1])
+	pos1, err := mysql.DecodePosition(args[1])
 	if err != nil {
 		return err
 	}
 
 	switch args[0] {
 	case "equal":
-		pos2, err := replication.DecodePosition(args[2])
+		pos2, err := mysql.DecodePosition(args[2])
 		if err != nil {
 			return err
 		}
 		fmt.Println(pos1.Equal(pos2))
 	case "at_least":
-		pos2, err := replication.DecodePosition(args[2])
+		pos2, err := mysql.DecodePosition(args[2])
 		if err != nil {
 			return err
 		}
 		fmt.Println(pos1.AtLeast(pos2))
 	case "append":
-		gtid, err := replication.DecodeGTID(args[2])
+		gtid, err := mysql.DecodeGTID(args[2])
 		if err != nil {
 			return err
 		}
-		fmt.Println(replication.AppendGTID(pos1, gtid))
+		fmt.Println(mysql.AppendGTID(pos1, gtid))
 	}
 
 	return nil
@@ -177,6 +204,8 @@ type command struct {
 var commands = []command{
 	{"init", initCmd, "[-wait_time=5m] [-init_db_sql_file=]",
 		"Initalizes the directory structure and starts mysqld"},
+	{"init_config", initConfigCmd, "",
+		"Initalizes the directory structure, creates my.cnf file, but does not start mysqld"},
 	{"reinit_config", reinitConfigCmd, "",
 		"Reinitalizes my.cnf file with new server_id"},
 	{"teardown", teardownCmd, "[-wait_time=5m] [-force]",

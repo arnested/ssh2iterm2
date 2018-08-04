@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package vtctl
 
@@ -9,55 +21,43 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/servenv"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/wrangler"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-)
-
-var (
-	// DisableActiveReparents is a flag to disable active
-	// reparents for safety reasons. It is used in two places:
-	// 1. in this file to skip registering the commands.
-	// 2. in vtctld so it can be exported to the UI (different
-	// package, that's why it's exported). That way we can disable
-	// menu items there, using features.
-	DisableActiveReparents = flag.Bool("disable_active_reparents", false, "if set, do not allow active reparents. Use this to protect a cluster using external reparents.")
+	"vitess.io/vitess/go/vt/mysqlctl"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func init() {
-	servenv.OnRun(func() {
-		if *DisableActiveReparents {
-			return
-		}
+	addCommand("Tablets", command{
+		"ReparentTablet",
+		commandReparentTablet,
+		"<tablet alias>",
+		"Reparent a tablet to the current master in the shard. This only works if the current slave position matches the last known reparent action."})
 
-		addCommand("Tablets", command{
-			"ReparentTablet",
-			commandReparentTablet,
-			"<tablet alias>",
-			"Reparent a tablet to the current master in the shard. This only works if the current slave position matches the last known reparent action."})
-
-		addCommand("Shards", command{
-			"InitShardMaster",
-			commandInitShardMaster,
-			"[-force] [-wait_slave_timeout=<duration>] <keyspace/shard> <tablet alias>",
-			"Sets the initial master for a shard. Will make all other tablets in the shard slaves of the provided master. WARNING: this could cause data loss on an already replicating shard. PlannedReparentShard or EmergencyReparentShard should be used instead."})
-		addCommand("Shards", command{
-			"PlannedReparentShard",
-			commandPlannedReparentShard,
-			"-keyspace_shard=<keyspace/shard> [-new_master=<tablet alias>] [-avoid_master=<tablet alias>]",
-			"Reparents the shard to the new master, or away from old master. Both old and new master need to be up and running."})
-		addCommand("Shards", command{
-			"EmergencyReparentShard",
-			commandEmergencyReparentShard,
-			"-keyspace_shard=<keyspace/shard> -new_master=<tablet alias>",
-			"Reparents the shard to the new master. Assumes the old master is dead and not responsding."})
-	})
+	addCommand("Shards", command{
+		"InitShardMaster",
+		commandInitShardMaster,
+		"[-force] [-wait_slave_timeout=<duration>] <keyspace/shard> <tablet alias>",
+		"Sets the initial master for a shard. Will make all other tablets in the shard slaves of the provided master. WARNING: this could cause data loss on an already replicating shard. PlannedReparentShard or EmergencyReparentShard should be used instead."})
+	addCommand("Shards", command{
+		"PlannedReparentShard",
+		commandPlannedReparentShard,
+		"-keyspace_shard=<keyspace/shard> [-new_master=<tablet alias>] [-avoid_master=<tablet alias>]",
+		"Reparents the shard to the new master, or away from old master. Both old and new master need to be up and running."})
+	addCommand("Shards", command{
+		"EmergencyReparentShard",
+		commandEmergencyReparentShard,
+		"-keyspace_shard=<keyspace/shard> -new_master=<tablet alias>",
+		"Reparents the shard to the new master. Assumes the old master is dead and not responsding."})
 }
 
 func commandReparentTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
+	if *mysqlctl.DisableActiveReparents {
+		return fmt.Errorf("active reparent commands disabled (unset the -disable_active_reparents flag to enable)")
+	}
+
 	if err := subFlags.Parse(args); err != nil {
 		return err
 	}
@@ -72,6 +72,10 @@ func commandReparentTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags 
 }
 
 func commandInitShardMaster(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
+	if *mysqlctl.DisableActiveReparents {
+		return fmt.Errorf("active reparent commands disabled (unset the -disable_active_reparents flag to enable)")
+	}
+
 	force := subFlags.Bool("force", false, "will force the reparent even if the provided tablet is not a master or the shard master")
 	waitSlaveTimeout := subFlags.Duration("wait_slave_timeout", 30*time.Second, "time to wait for slaves to catch up in reparenting")
 	if err := subFlags.Parse(args); err != nil {
@@ -92,6 +96,10 @@ func commandInitShardMaster(ctx context.Context, wr *wrangler.Wrangler, subFlags
 }
 
 func commandPlannedReparentShard(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
+	if *mysqlctl.DisableActiveReparents {
+		return fmt.Errorf("active reparent commands disabled (unset the -disable_active_reparents flag to enable)")
+	}
+
 	waitSlaveTimeout := subFlags.Duration("wait_slave_timeout", 30*time.Second, "time to wait for slaves to catch up in reparenting")
 	keyspaceShard := subFlags.String("keyspace_shard", "", "keyspace/shard of the shard that needs to be reparented")
 	newMaster := subFlags.String("new_master", "", "alias of a tablet that should be the new master")
@@ -131,6 +139,10 @@ func commandPlannedReparentShard(ctx context.Context, wr *wrangler.Wrangler, sub
 }
 
 func commandEmergencyReparentShard(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
+	if *mysqlctl.DisableActiveReparents {
+		return fmt.Errorf("active reparent commands disabled (unset the -disable_active_reparents flag to enable)")
+	}
+
 	waitSlaveTimeout := subFlags.Duration("wait_slave_timeout", 30*time.Second, "time to wait for slaves to catch up in reparenting")
 	keyspaceShard := subFlags.String("keyspace_shard", "", "keyspace/shard of the shard that needs to be reparented")
 	newMaster := subFlags.String("new_master", "", "alias of a tablet that should be the new master")

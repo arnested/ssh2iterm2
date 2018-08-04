@@ -1,17 +1,29 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package vtworkerclient
 
 import (
 	"io"
-	"time"
 
 	"golang.org/x/net/context"
 
-	logutilpb "github.com/youtube/vitess/go/vt/proto/logutil"
-	"github.com/youtube/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vterrors"
+
+	logutilpb "vitess.io/vitess/go/vt/proto/logutil"
 )
 
 // RunCommandAndWait executes a single command on a given vtworker and blocks until the command did return or timed out.
@@ -22,17 +34,16 @@ func RunCommandAndWait(ctx context.Context, server string, args []string, recv f
 		panic("no function closure for Event stream specified")
 	}
 	// create the client
-	// TODO(mberlin): vtctlclient exposes dialTimeout as flag. If there are no use cases, remove it there as well to be consistent?
-	client, err := New(server, 30*time.Second /* dialTimeout */)
+	client, err := New(server)
 	if err != nil {
-		return vterrors.Errorf(vterrors.Code(err), "cannot dial to server "+server+": %v", err)
+		return vterrors.Wrapf(err, "cannot dial to server %v", server)
 	}
 	defer client.Close()
 
 	// run the command
 	stream, err := client.ExecuteVtworkerCommand(ctx, args)
 	if err != nil {
-		return vterrors.Errorf(vterrors.Code(err), "cannot execute remote command: %v", err)
+		return vterrors.Wrap(err, "cannot execute remote command")
 	}
 
 	for {
@@ -43,7 +54,7 @@ func RunCommandAndWait(ctx context.Context, server string, args []string, recv f
 		case io.EOF:
 			return nil
 		default:
-			return vterrors.Errorf(vterrors.Code(err), "stream error: %v", err)
+			return vterrors.Wrap(err, "stream error")
 		}
 	}
 }

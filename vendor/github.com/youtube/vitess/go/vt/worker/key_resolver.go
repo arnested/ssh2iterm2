@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -8,15 +20,15 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/youtube/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sqltypes"
 
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/mysqlctl/tmutils"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vtgate/vindexes"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/mysqlctl/tmutils"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/vtgate/vindexes"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // This file defines the interface and implementations of sharding key resolvers.
@@ -64,9 +76,9 @@ func (r *v2Resolver) keyspaceID(row []sqltypes.Value) ([]byte, error) {
 	v := row[r.shardingColumnIndex]
 	switch r.keyspaceInfo.ShardingColumnType {
 	case topodatapb.KeyspaceIdType_BYTES:
-		return v.Raw(), nil
+		return v.ToBytes(), nil
 	case topodatapb.KeyspaceIdType_UINT64:
-		i, err := v.ParseUint64()
+		i, err := sqltypes.ToUint64(v)
 		if err != nil {
 			return nil, fmt.Errorf("Non numerical value: %v", err)
 		}
@@ -81,7 +93,7 @@ func (r *v2Resolver) keyspaceID(row []sqltypes.Value) ([]byte, error) {
 // table.
 type v3Resolver struct {
 	shardingColumnIndex int
-	vindex              vindexes.Unique
+	vindex              vindexes.Vindex
 }
 
 // newV3ResolverFromTableDefinition returns a keyspaceIDResolver for a v3 table.
@@ -102,20 +114,20 @@ func newV3ResolverFromTableDefinition(keyspaceSchema *vindexes.KeyspaceSchema, t
 	if colVindex.Vindex.Cost() > 1 {
 		return nil, fmt.Errorf("primary vindex cost is too high for table %v", td.Name)
 	}
-	unique, ok := colVindex.Vindex.(vindexes.Unique)
-	if !ok {
+	if !colVindex.Vindex.IsUnique() {
+		// This is impossible, but just checking anyway.
 		return nil, fmt.Errorf("primary vindex is not unique for table %v", td.Name)
 	}
 
 	// Find the sharding key column index.
-	columnIndex, ok := tmutils.TableDefinitionGetColumn(td, colVindex.Column.String())
+	columnIndex, ok := tmutils.TableDefinitionGetColumn(td, colVindex.Columns[0].String())
 	if !ok {
-		return nil, fmt.Errorf("table %v has a Vindex on unknown column %v", td.Name, colVindex.Column)
+		return nil, fmt.Errorf("table %v has a Vindex on unknown column %v", td.Name, colVindex.Columns[0])
 	}
 
 	return &v3Resolver{
 		shardingColumnIndex: columnIndex,
-		vindex:              unique,
+		vindex:              colVindex.Vindex,
 	}, nil
 }
 
@@ -134,39 +146,42 @@ func newV3ResolverFromColumnList(keyspaceSchema *vindexes.KeyspaceSchema, name s
 	if colVindex.Vindex.Cost() > 1 {
 		return nil, fmt.Errorf("primary vindex cost is too high for table %v", name)
 	}
-	unique, ok := colVindex.Vindex.(vindexes.Unique)
-	if !ok {
+	if !colVindex.Vindex.IsUnique() {
+		// This is impossible, but just checking anyway.
 		return nil, fmt.Errorf("primary vindex is not unique for table %v", name)
 	}
 
 	// Find the sharding key column index.
 	columnIndex := -1
 	for i, n := range columns {
-		if colVindex.Column.EqualString(n) {
+		if colVindex.Columns[0].EqualString(n) {
 			columnIndex = i
 			break
 		}
 	}
 	if columnIndex == -1 {
-		return nil, fmt.Errorf("table %v has a Vindex on unknown column %v", name, colVindex.Column)
+		return nil, fmt.Errorf("table %v has a Vindex on unknown column %v", name, colVindex.Columns[0])
 	}
 
 	return &v3Resolver{
 		shardingColumnIndex: columnIndex,
-		vindex:              unique,
+		vindex:              colVindex.Vindex,
 	}, nil
 }
 
 // keyspaceID implements the keyspaceIDResolver interface.
 func (r *v3Resolver) keyspaceID(row []sqltypes.Value) ([]byte, error) {
 	v := row[r.shardingColumnIndex]
-	ids := []interface{}{v}
-	ksids, err := r.vindex.Map(nil, ids)
+	destinations, err := r.vindex.Map(nil, []sqltypes.Value{v})
 	if err != nil {
 		return nil, err
 	}
-	if len(ksids) != 1 {
-		return nil, fmt.Errorf("maping row to keyspace id returned an invalid array of keyspace ids: %v", ksids)
+	if len(destinations) != 1 {
+		return nil, fmt.Errorf("mapping row to keyspace id returned an invalid array of keyspace ids: %v", key.DestinationsString(destinations))
 	}
-	return ksids[0], nil
+	ksid, ok := destinations[0].(key.DestinationKeyspaceID)
+	if !ok || len(ksid) == 0 {
+		return nil, fmt.Errorf("could not map %v to a keyspace id, got destination %v", v, destinations[0])
+	}
+	return ksid, nil
 }

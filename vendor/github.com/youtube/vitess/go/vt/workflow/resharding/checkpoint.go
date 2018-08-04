@@ -1,18 +1,35 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package resharding
 
 import (
-	"context"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/vt/topo"
+	"golang.org/x/net/context"
 
-	workflowpb "github.com/youtube/vitess/go/vt/proto/workflow"
+	"github.com/golang/protobuf/proto"
+	"vitess.io/vitess/go/vt/topo"
+
+	workflowpb "vitess.io/vitess/go/vt/proto/workflow"
 )
 
 // CheckpointWriter saves the checkpoint data into topology server.
 type CheckpointWriter struct {
-	topoServer topo.Server
+	topoServer *topo.Server
 
 	// checkpointMu is used for protecting data access during checkpointing.
 	mu         sync.Mutex
@@ -21,7 +38,7 @@ type CheckpointWriter struct {
 }
 
 // NewCheckpointWriter creates a CheckpointWriter.
-func NewCheckpointWriter(ts topo.Server, checkpoint *workflowpb.WorkflowCheckpoint, wi *topo.WorkflowInfo) *CheckpointWriter {
+func NewCheckpointWriter(ts *topo.Server, checkpoint *workflowpb.WorkflowCheckpoint, wi *topo.WorkflowInfo) *CheckpointWriter {
 	return &CheckpointWriter{
 		topoServer: ts,
 		checkpoint: checkpoint,

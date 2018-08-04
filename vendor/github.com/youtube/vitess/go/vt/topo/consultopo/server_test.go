@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package consultopo
 
 import (
@@ -10,26 +26,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/consul/api"
-	"github.com/youtube/vitess/go/testfiles"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/test"
+	"golang.org/x/net/context"
+	"vitess.io/vitess/go/testfiles"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/test"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // startConsul starts a consul subprocess, and waits for it to be ready.
 // Returns the exec.Cmd forked, the config file to remove after the test,
 // and the server address to RPC-connect to.
 func startConsul(t *testing.T) (*exec.Cmd, string, string) {
-	// Create a temporary config file, as ports cannot all be set via
-	// command line.
-	configFile, err := ioutil.TempFile("", "consul")
+	// Create a temporary config file, as ports cannot all be set
+	// via command line. The file name has to end with '.json' so
+	// we're not using TempFile.
+	configDir, err := ioutil.TempDir("", "consul")
+	if err != nil {
+		t.Fatalf("cannot create temp dir: %v", err)
+	}
+	defer os.RemoveAll(configDir)
+
+	configFilename := path.Join(configDir, "consul.json")
+	configFile, err := os.OpenFile(configFilename, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		t.Fatalf("cannot create tempfile: %v", err)
 	}
-	configFilename := configFile.Name()
 
 	// Create the JSON config, save it.
 	port := testfiles.GoVtTopoConsultopoPort
@@ -37,9 +60,8 @@ func startConsul(t *testing.T) (*exec.Cmd, string, string) {
 		"ports": map[string]int{
 			"dns":      port,
 			"http":     port + 1,
-			"rpc":      port + 2,
-			"serf_lan": port + 3,
-			"serf_wan": port + 4,
+			"serf_lan": port + 2,
+			"serf_wan": port + 3,
 		},
 	}
 	data, err := json.Marshal(config)
@@ -99,42 +121,27 @@ func TestConsulTopo(t *testing.T) {
 		os.Remove(configFilename)
 	}()
 
-	// This function will create a toplevel directory for a new test.
+	// Run the TopoServerTestSuite tests.
 	testIndex := 0
-	newServer := func() *Server {
+	test.TopoServerTestSuite(t, func() *topo.Server {
 		// Each test will use its own sub-directories.
 		testRoot := fmt.Sprintf("test-%v", testIndex)
 		testIndex++
 
 		// Create the server on the new root.
-		s, err := NewServer(serverAddr, path.Join(testRoot, "global"))
+		ts, err := topo.OpenServer("consul", serverAddr, path.Join(testRoot, topo.GlobalCell))
 		if err != nil {
-			t.Fatalf("NewServer() failed: %v", err)
+			t.Fatalf("OpenServer() failed: %v", err)
 		}
 
 		// Create the CellInfo.
-		cell := "test"
-		ci := &topodatapb.CellInfo{
+		if err := ts.CreateCellInfo(context.Background(), test.LocalCellName, &topodatapb.CellInfo{
 			ServerAddress: serverAddr,
-			Root:          path.Join(testRoot, cell),
-		}
-		data, err := proto.Marshal(ci)
-		if err != nil {
-			t.Fatalf("cannot proto.Marshal CellInfo: %v", err)
-		}
-		nodePath := path.Join(s.global.root, cellsPath, cell, topo.CellInfoFile)
-		if _, err := s.global.kv.Put(&api.KVPair{
-			Key:   nodePath,
-			Value: data,
-		}, nil); err != nil {
-			t.Fatalf("s.global.kv.Put(%v) failed: %v", nodePath, err)
+			Root:          path.Join(testRoot, test.LocalCellName),
+		}); err != nil {
+			t.Fatalf("CreateCellInfo() failed: %v", err)
 		}
 
-		return s
-	}
-
-	// Run the TopoServerTestSuite tests.
-	test.TopoServerTestSuite(t, func() topo.Impl {
-		return newServer()
+		return ts
 	})
 }

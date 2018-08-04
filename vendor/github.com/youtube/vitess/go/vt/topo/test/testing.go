@@ -1,18 +1,36 @@
-// Package test contains utilities to test topo.Impl
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package test contains utilities to test topo.Conn
 // implementations. If you are testing your implementation, you will
 // want to call TopoServerTestSuite in your test method. For an
 // example, look at the tests in
-// github.com/youtube/vitess/go/vt/topo/memorytopo.
+// vitess.io/vitess/go/vt/topo/memorytopo.
 package test
 
 import (
 	"testing"
 
-	"github.com/youtube/vitess/go/vt/topo"
-	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/topo"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
+
+// LocalCellName is the cell name used by this test suite.
+const LocalCellName = "test"
 
 func newKeyRange(value string) *topodatapb.KeyRange {
 	_, result, err := topo.ValidateShardName(value)
@@ -22,22 +40,11 @@ func newKeyRange(value string) *topodatapb.KeyRange {
 	return result
 }
 
-func getLocalCell(ctx context.Context, t *testing.T, ts topo.Impl) string {
-	cells, err := ts.GetKnownCells(ctx)
-	if err != nil {
-		t.Fatalf("GetKnownCells: %v", err)
-	}
-	if len(cells) < 1 {
-		t.Fatalf("provided topo.Impl doesn't have enough cells (need at least 1): %v", cells)
-	}
-	return cells[0]
-}
-
-// TopoServerTestSuite runs the full topo.Impl test suite.
-// The factory method should return a topo server that has a single cell
-// called 'test'.
-func TopoServerTestSuite(t *testing.T, factory func() topo.Impl) {
-	var ts topo.Impl
+// TopoServerTestSuite runs the full topo.Server/Conn test suite.
+// The factory method should return a topo.Server that has a single cell
+// called LocalCellName.
+func TopoServerTestSuite(t *testing.T, factory func() *topo.Server) {
+	var ts *topo.Server
 
 	t.Log("=== checkKeyspace")
 	ts = factory()
@@ -69,14 +76,9 @@ func TopoServerTestSuite(t *testing.T, factory func() topo.Impl) {
 	checkSrvVSchema(t, ts)
 	ts.Close()
 
-	t.Log("=== checkKeyspaceLock")
+	t.Log("=== checkLock")
 	ts = factory()
-	checkKeyspaceLock(t, ts)
-	ts.Close()
-
-	t.Log("=== checkShardLock")
-	ts = factory()
-	checkShardLock(t, ts)
+	checkLock(t, ts)
 	ts.Close()
 
 	t.Log("=== checkVSchema")

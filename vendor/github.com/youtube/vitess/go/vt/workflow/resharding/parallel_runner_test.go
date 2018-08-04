@@ -1,7 +1,22 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package resharding
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -9,12 +24,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/workflow"
+	"golang.org/x/net/context"
 
-	workflowpb "github.com/youtube/vitess/go/vt/proto/workflow"
+	"github.com/golang/protobuf/proto"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/workflow"
+
+	workflowpb "vitess.io/vitess/go/vt/proto/workflow"
 )
 
 func TestParallelRunner(t *testing.T) {
@@ -458,7 +475,7 @@ func TestParallelRunnerRetry(t *testing.T) {
 	wg.Wait()
 }
 
-func setupTestWorkflow(ctx context.Context, ts topo.Server, enableApprovals, retry bool) (*workflow.Manager, string, *sync.WaitGroup, context.CancelFunc, error) {
+func setupTestWorkflow(ctx context.Context, ts *topo.Server, enableApprovals, retry bool) (*workflow.Manager, string, *sync.WaitGroup, context.CancelFunc, error) {
 	m := workflow.NewManager(ts)
 	// Run the manager in the background.
 	wg, _, cancel := startManager(m)
@@ -716,7 +733,7 @@ func waitForFinished(notifications chan []byte, path, message string) error {
 	return fmt.Errorf("notifications channel is closed unexpectedly when waiting for expected nodes")
 }
 
-func verifyAllTasksDone(ctx context.Context, ts topo.Server, uuid string) error {
+func verifyAllTasksDone(ctx context.Context, ts *topo.Server, uuid string) error {
 	checkpoint, err := checkpoint(ctx, ts, uuid)
 	if err != nil {
 		return err
@@ -730,7 +747,7 @@ func verifyAllTasksDone(ctx context.Context, ts topo.Server, uuid string) error 
 	return nil
 }
 
-func verifyTask(ctx context.Context, ts topo.Server, uuid, taskID string, taskState workflowpb.TaskState, taskError string) error {
+func verifyTask(ctx context.Context, ts *topo.Server, uuid, taskID string, taskState workflowpb.TaskState, taskError string) error {
 	checkpoint, err := checkpoint(ctx, ts, uuid)
 	if err != nil {
 		return err
@@ -743,7 +760,7 @@ func verifyTask(ctx context.Context, ts topo.Server, uuid, taskID string, taskSt
 	return nil
 }
 
-func checkpoint(ctx context.Context, ts topo.Server, uuid string) (*workflowpb.WorkflowCheckpoint, error) {
+func checkpoint(ctx context.Context, ts *topo.Server, uuid string) (*workflowpb.WorkflowCheckpoint, error) {
 	wi, err := ts.GetWorkflow(ctx, uuid)
 	if err != nil {
 		return nil, fmt.Errorf("fail to get workflow for: %v", uuid)

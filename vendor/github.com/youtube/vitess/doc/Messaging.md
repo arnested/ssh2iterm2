@@ -1,6 +1,6 @@
 # Vitess Messaging
 
-# Overview
+## Overview
 
 Vitess messaging gives the application an easy way to schedule and manage work
 that needs to be performed asynchronously. Under the covers, messages are
@@ -41,7 +41,7 @@ Messages are not a good fit for the following use cases:
 * Ordered delivery.
 * Real-time delivery.
 
-# Creating a message table
+## Creating a message table
 
 The current implementation requires a fixed schema. This will be made more
 flexible in the future. There will also be a custom DDL syntax. For now, a
@@ -88,7 +88,7 @@ are as follows:
 If any of the above fields are missing, vitess will fail to load the table. No
 operation will be allowed on a table that has failed to load.
 
-# Enqueuing messages
+## Enqueuing messages
 
 The application can enqueue messages using an insert statement:
 
@@ -109,7 +109,7 @@ insert into my_message(id, message, time_scheduled) values(1, 'hello world', :fu
 
 `future_time` must be the unix time expressed in nanoseconds.
 
-# Receiving messages
+## Receiving messages
 
 Processes can subscribe to receive messages by sending a `MessageStream`
 request to VTGate. If there are multiple subscribers, the messages will be
@@ -121,7 +121,7 @@ standard database tools that understand query results can also be message
 recipients. Currently, there is no SQL format for subscribing to messages, but
 one will be provided soon.
 
-## Subsetting
+### Subsetting
 
 It's possible that you may want to subscribe to specific shards or groups of
 shards while requesting messages. This is useful for partitioning or load
@@ -136,13 +136,13 @@ request parameters are as follows:
 * `KeyRange`: If the keyspace is sharded, streaming will be performed only from
   the shards that match the range. This must be an exact match.
 
-# Acknowledging messages
+## Acknowledging messages
 
 A received (or processed) message can be acknowledged using the `MessageAck`
 API call. This call accepts the following parameters:
 
 * `Name`: Name of the message table.
-* `Keyspace`: Keypsace where the message table is present. This field can be
+* `Keyspace`: Keyspace where the message table is present. This field can be
   empty if the table name is unique across all keyspaces.
 * `Ids`: The list of ids that need to be acked.
 
@@ -154,12 +154,12 @@ A message that was successfully sent will wait for the specified ack wait time.
 If no ack is received by then, it will be resent. The next attempt will be 2x
 the previous wait, and this delay is doubled for every attempt.
 
-# Purging
+## Purging
 
 Messages that have been successfully acked will be deleted after their age
 exceeds the time period specified by `vt_purge_after`.
 
-# Advanced usage
+## Advanced usage
 
 The `MessageAck` functionality is currently an API call and cannot be used
 inside a transaction. However, you can ack messages using a regular DML. It
@@ -184,18 +184,24 @@ message and the back-off is less aggressive.
 
 You can also view messages using regular `select` queries.
 
-# Known limitations
+## Undocumented features
 
-The message feature is currently in alpha, and can be improved. Here is the
-list of possible limitations/improvements:
+These are features that were previously known limitations, but have since been supported
+and are awaiting further documentation.
 
 * Flexible columns: Allow any number of application defined columns to be in
   the message table.
 * No ACL check for receivers: To be added.
-* Proactive scheduling: Upcoming messages can be proactively scheduled for
-  timely delivery instead of waiting for the next polling cycle.
 * Monitoring support: To be added.
 * Dropped tables: The message engine does not currently detect dropped tables.
+
+## Known limitations
+
+The message feature is currently in alpha, and can be improved. Here is the
+list of possible limitations/improvements:
+
+* Proactive scheduling: Upcoming messages can be proactively scheduled for
+  timely delivery instead of waiting for the next polling cycle.
 * Changed properties: Although the engine detects new message tables, it does
   not refresh properties of an existing table.
 * A `SELECT` style syntax for subscribing to messages.

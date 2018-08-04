@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package tabletservermock provides mock interfaces for tabletserver.
 package tabletservermock
@@ -10,13 +22,16 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/dbconfigs"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/rules"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/schema"
+	"time"
+
+	"vitess.io/vitess/go/vt/dbconfigs"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/rules"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // BroadcastData is used by the mock Controller to send data
@@ -57,6 +72,9 @@ type Controller struct {
 	// SetServingTypeError is the return value for SetServingType.
 	SetServingTypeError error
 
+	// TS is the return value for TopoServer.
+	TS *topo.Server
+
 	// mu protects the next fields in this structure. They are
 	// accessed by both the methods in this interface, and the
 	// background health check.
@@ -67,6 +85,9 @@ type Controller struct {
 
 	// isInLameduck is a state variable.
 	isInLameduck bool
+
+	// queryRulesMap has the latest query rules.
+	queryRulesMap map[string]*rules.Rules
 }
 
 // NewController returns a mock of tabletserver.Controller
@@ -75,6 +96,7 @@ func NewController() *Controller {
 		queryServiceEnabled: false,
 		BroadcastData:       make(chan *BroadcastData, 10),
 		StateChanges:        make(chan *StateChange, 10),
+		queryRulesMap:       make(map[string]*rules.Rules),
 	}
 }
 
@@ -87,7 +109,7 @@ func (tqsc *Controller) AddStatusPart() {
 }
 
 // InitDBConfig is part of the tabletserver.Controller interface
-func (tqsc *Controller) InitDBConfig(target querypb.Target, dbConfigs dbconfigs.DBConfigs, mysqld mysqlctl.MysqlDaemon) error {
+func (tqsc *Controller) InitDBConfig(target querypb.Target, dbcfgs dbconfigs.DBConfigs) error {
 	tqsc.mu.Lock()
 	defer tqsc.mu.Unlock()
 
@@ -148,6 +170,9 @@ func (tqsc *Controller) UnRegisterQueryRuleSource(ruleSource string) {
 
 // SetQueryRules is part of the tabletserver.Controller interface
 func (tqsc *Controller) SetQueryRules(ruleSource string, qrs *rules.Rules) error {
+	tqsc.mu.Lock()
+	defer tqsc.mu.Unlock()
+	tqsc.queryRulesMap[ruleSource] = qrs
 	return nil
 }
 
@@ -173,6 +198,16 @@ func (tqsc *Controller) BroadcastHealth(terTimestamp int64, stats *querypb.Realt
 	}
 }
 
+// HeartbeatLag is part of the tabletserver.Controller interface.
+func (tqsc *Controller) HeartbeatLag() (time.Duration, error) {
+	return 0, nil
+}
+
+// TopoServer is part of the tabletserver.Controller interface.
+func (tqsc *Controller) TopoServer() *topo.Server {
+	return tqsc.TS
+}
+
 // EnterLameduck implements tabletserver.Controller.
 func (tqsc *Controller) EnterLameduck() {
 	tqsc.mu.Lock()
@@ -187,4 +222,11 @@ func (tqsc *Controller) SetQueryServiceEnabledForTests(enabled bool) {
 	defer tqsc.mu.Unlock()
 
 	tqsc.queryServiceEnabled = enabled
+}
+
+// GetQueryRules allows a test to check what was set.
+func (tqsc *Controller) GetQueryRules(ruleSource string) *rules.Rules {
+	tqsc.mu.Lock()
+	defer tqsc.mu.Unlock()
+	return tqsc.queryRulesMap[ruleSource]
 }

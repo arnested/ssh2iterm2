@@ -1,21 +1,42 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package grpcvtctlclient contains the gRPC version of the vtctl client protocol
 package grpcvtctlclient
 
 import (
+	"flag"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/vtctl/vtctlclient"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/vtctl/vtctlclient"
 
-	logutilpb "github.com/youtube/vitess/go/vt/proto/logutil"
-	vtctldatapb "github.com/youtube/vitess/go/vt/proto/vtctldata"
-	vtctlservicepb "github.com/youtube/vitess/go/vt/proto/vtctlservice"
+	logutilpb "vitess.io/vitess/go/vt/proto/logutil"
+	vtctldatapb "vitess.io/vitess/go/vt/proto/vtctldata"
+	vtctlservicepb "vitess.io/vitess/go/vt/proto/vtctlservice"
+)
+
+var (
+	cert = flag.String("vtctld_grpc_cert", "", "the cert to use to connect")
+	key  = flag.String("vtctld_grpc_key", "", "the key to use to connect")
+	ca   = flag.String("vtctld_grpc_ca", "", "the server ca to use to validate servers when connecting")
+	name = flag.String("vtctld_grpc_server_name", "", "the server name to use to validate server certificate")
 )
 
 type gRPCVtctlClient struct {
@@ -23,9 +44,13 @@ type gRPCVtctlClient struct {
 	c  vtctlservicepb.VtctlClient
 }
 
-func gRPCVtctlClientFactory(addr string, dialTimeout time.Duration) (vtctlclient.VtctlClient, error) {
+func gRPCVtctlClientFactory(addr string) (vtctlclient.VtctlClient, error) {
+	opt, err := grpcclient.SecureDialOption(*cert, *key, *ca, *name)
+	if err != nil {
+		return nil, err
+	}
 	// create the RPC client
-	cc, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(dialTimeout))
+	cc, err := grpcclient.Dial(addr, grpcclient.FailFast(false), opt)
 	if err != nil {
 		return nil, err
 	}

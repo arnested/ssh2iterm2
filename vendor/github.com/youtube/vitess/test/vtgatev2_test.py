@@ -1,6 +1,21 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# Copyright 2017 Google Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 import logging
 from multiprocessing.pool import ThreadPool
 import pprint
@@ -27,8 +42,8 @@ use_l2vtgate = False
 # l2vtgate is the L2VTGate object, if any
 l2vtgate = None
 
-# l2vtgate_param is the parameter to send to vtgate
-l2vtgate_param = None
+# l2vtgate_addr is the address of the l2vtgate to send to vtgate
+l2vtgate_addr = None
 
 shard_0_master = tablet.Tablet()
 shard_0_replica1 = tablet.Tablet()
@@ -37,6 +52,9 @@ shard_0_replica2 = tablet.Tablet()
 shard_1_master = tablet.Tablet()
 shard_1_replica1 = tablet.Tablet()
 shard_1_replica2 = tablet.Tablet()
+
+all_tablets = [shard_0_master, shard_0_replica1, shard_0_replica2,
+               shard_1_master, shard_1_replica1, shard_1_replica2]
 
 KEYSPACE_NAME = 'test_keyspace'
 SHARD_NAMES = ['-80', '80-']
@@ -166,7 +184,7 @@ def tearDownModule():
 
 def setup_tablets():
   """Start up a master mysql and vttablet."""
-  global l2vtgate, l2vtgate_param
+  global l2vtgate, l2vtgate_addr
 
   logging.debug('Setting up tablets')
   utils.run_vtctl(['CreateKeyspace', KEYSPACE_NAME])
@@ -235,36 +253,31 @@ def setup_tablets():
       'Partitions(replica): -80 80-\n')
 
   if use_l2vtgate:
-    l2vtgate = utils.L2VtGate()
-    l2vtgate.start(tablets=
+    l2vtgate = utils.VtGate()
+    l2vtgate.start(extra_args=['--enable_forwarding'], tablets=
                    [shard_0_master, shard_0_replica1, shard_0_replica2,
                     shard_1_master, shard_1_replica1, shard_1_replica2])
-    _, addr = l2vtgate.rpc_endpoint()
-    l2vtgate_param = '%s|%s|%s' % (addr, KEYSPACE_NAME, '-')
-    utils.VtGate().start(l2vtgates=[l2vtgate_param,])
+    _, l2vtgate_addr = l2vtgate.rpc_endpoint()
+
+    # Clear utils.vtgate, so it doesn't point to the previous l2vtgate.
+    utils.vtgate = None
+
+    # This vgate doesn't watch any local tablets, so we disable_local_gateway.
+    utils.VtGate().start(l2vtgates=[l2vtgate_addr,],
+                         extra_args=['-disable_local_gateway'])
 
   else:
     utils.VtGate().start(tablets=
                          [shard_0_master, shard_0_replica1, shard_0_replica2,
                           shard_1_master, shard_1_replica1, shard_1_replica2])
 
-  wait_for_endpoints(
-      '%s.%s.master' % (KEYSPACE_NAME, SHARD_NAMES[0]),
-      1)
-  wait_for_endpoints(
-      '%s.%s.replica' % (KEYSPACE_NAME, SHARD_NAMES[0]),
-      2)
-  wait_for_endpoints(
-      '%s.%s.master' % (KEYSPACE_NAME, SHARD_NAMES[1]),
-      1)
-  wait_for_endpoints(
-      '%s.%s.replica' % (KEYSPACE_NAME, SHARD_NAMES[1]),
-      2)
+  wait_for_all_tablets()
 
 
 def restart_vtgate(port):
   if use_l2vtgate:
-    utils.VtGate(port=port).start(l2vtgates=[l2vtgate_param,])
+    utils.VtGate(port=port).start(l2vtgates=[l2vtgate_addr,],
+                                  extra_args=['-disable_local_gateway'])
   else:
     utils.VtGate(port=port).start(
         tablets=[shard_0_master, shard_0_replica1, shard_0_replica2,
@@ -273,9 +286,19 @@ def restart_vtgate(port):
 
 def wait_for_endpoints(name, count):
   if use_l2vtgate:
+    # Wait for the l2vtgate to have a healthy connection.
     l2vtgate.wait_for_endpoints(name, count)
+    # Also wait for vtgate to have received the remote healthy connection.
+    utils.vtgate.wait_for_endpoints(name, count, var='L2VtgateConnections')
   else:
     utils.vtgate.wait_for_endpoints(name, count)
+
+
+def wait_for_all_tablets():
+  wait_for_endpoints('%s.%s.master' % (KEYSPACE_NAME, SHARD_NAMES[0]), 1)
+  wait_for_endpoints('%s.%s.replica' % (KEYSPACE_NAME, SHARD_NAMES[0]), 2)
+  wait_for_endpoints('%s.%s.master' % (KEYSPACE_NAME, SHARD_NAMES[1]), 1)
+  wait_for_endpoints('%s.%s.replica' % (KEYSPACE_NAME, SHARD_NAMES[1]), 2)
 
 
 def get_connection(timeout=10.0):
@@ -397,8 +420,8 @@ class TestCoreVTGateFunctions(BaseTestCase):
     before1 = v['VttabletCall']['Histograms'][key1]['Count']
     if use_l2vtgate:
       lv = l2vtgate.get_vars()
-      lbefore0 = lv['VttabletCall']['Histograms'][key0]['Count']
-      lbefore1 = lv['VttabletCall']['Histograms'][key1]['Count']
+      lbefore0 = lv['QueryServiceCall']['Histograms'][key0]['Count']
+      lbefore1 = lv['QueryServiceCall']['Histograms'][key1]['Count']
 
     cursor = vtgate_conn.cursor(
         tablet_type='master', keyspace=KEYSPACE_NAME,
@@ -414,8 +437,8 @@ class TestCoreVTGateFunctions(BaseTestCase):
     self.assertEqual(after1 - before1, 1)
     if use_l2vtgate:
       lv = l2vtgate.get_vars()
-      lafter0 = lv['VttabletCall']['Histograms'][key0]['Count']
-      lafter1 = lv['VttabletCall']['Histograms'][key1]['Count']
+      lafter0 = lv['QueryServiceCall']['Histograms'][key0]['Count']
+      lafter1 = lv['QueryServiceCall']['Histograms'][key1]['Count']
       self.assertEqual(lafter0 - lbefore0, 1)
       self.assertEqual(lafter1 - lbefore1, 1)
 
@@ -681,7 +704,7 @@ class TestCoreVTGateFunctions(BaseTestCase):
         cursorclass=vtgate_cursor.StreamVTGateCursor)
     stream_cursor.execute('select * from vt_insert_test', {})
     rows = stream_cursor.fetchone()
-    self.assertTrue(isinstance(rows, tuple), 'Received a valid row')
+    self.assertIsInstance(rows, tuple, 'Received a valid row')
     stream_cursor.close()
     vtgate_conn.close()
 
@@ -850,7 +873,7 @@ class TestCoreVTGateFunctions(BaseTestCase):
     query = 'select * from vt_field_types where uint_val in ::uint_val_1'
     rowcount = cursor.execute(query, {'uint_val_1': uint_val_list})
     self.assertEqual(rowcount, len(uint_val_list), "rowcount doesn't match")
-    for _, r in enumerate(cursor.results):
+    for r in cursor.results:
       row = DBRow(field_names, r)
       self.assertIsInstance(row.uint_val, long)
       self.assertGreaterEqual(
@@ -892,9 +915,8 @@ class TestCoreVTGateFunctions(BaseTestCase):
     v = utils.vtgate.get_vars()
     self.assertIn('VtgateVSchemaCounts', v)
     self.assertIn('Reload', v['VtgateVSchemaCounts'])
-    self.assertTrue(v['VtgateVSchemaCounts']['Reload'] > 0)
-    self.assertIn('WatchError', v['VtgateVSchemaCounts'])
-    self.assertTrue(v['VtgateVSchemaCounts']['WatchError'] > 0)
+    self.assertGreater(v['VtgateVSchemaCounts']['Reload'], 0)
+    self.assertNotIn('WatchError', v['VtgateVSchemaCounts'])
     self.assertNotIn('Parsing', v['VtgateVSchemaCounts'])
 
 
@@ -1122,7 +1144,7 @@ class TestFailures(BaseTestCase):
       # instead of poking into it like this.
       logging.info('Shard session: %s', vtgate_conn.session)
       transaction_id = vtgate_conn.session.shard_sessions[0].transaction_id
-      self.assertTrue(transaction_id != 0)
+      self.assertNotEqual(transaction_id, 0)
     except Exception, e:  # pylint: disable=broad-except
       self.fail('Expected DatabaseError as exception, got %s' % str(e))
     finally:
@@ -1341,7 +1363,7 @@ class TestFailures(BaseTestCase):
         keyranges=[self.keyrange])
     tablet1_vars = utils.get_vars(self.replica_tablet.port)
     t1_query_count_after = int(tablet1_vars['Queries']['TotalCount'])
-    self.assertEquals(t1_query_count_after-t1_query_count_before, 1)
+    self.assertEqual(t1_query_count_after-t1_query_count_before, 1)
     # Wait for tablet2 to go down.
     replica_tablet2_proc.wait()
     # send another query, should also succeed on tablet1
@@ -1353,7 +1375,7 @@ class TestFailures(BaseTestCase):
         keyranges=[self.keyrange])
     tablet1_vars = utils.get_vars(self.replica_tablet.port)
     t1_query_count_after = int(tablet1_vars['Queries']['TotalCount'])
-    self.assertEquals(t1_query_count_after-t1_query_count_before, 1)
+    self.assertEqual(t1_query_count_after-t1_query_count_before, 1)
     # start tablet2
     self.tablet_start(self.replica_tablet2, 'replica')
     wait_for_endpoints(
@@ -1372,8 +1394,8 @@ class TestFailures(BaseTestCase):
     t1_query_count_after = int(tablet1_vars['Queries']['TotalCount'])
     tablet2_vars = utils.get_vars(self.replica_tablet2.port)
     t2_query_count_after = int(tablet2_vars['Queries']['TotalCount'])
-    self.assertEquals(t1_query_count_after-t1_query_count_before
-                      +t2_query_count_after-t2_query_count_before, 1)
+    self.assertEqual(t1_query_count_after-t1_query_count_before
+                     +t2_query_count_after-t2_query_count_before, 1)
     vtgate_conn.close()
 
   # Test the case that there are queries sent during one vttablet is killed,
@@ -1390,7 +1412,7 @@ class TestFailures(BaseTestCase):
         keyranges=[self.keyrange])
     tablet2_vars = utils.get_vars(self.replica_tablet2.port)
     t2_query_count_after = int(tablet2_vars['Queries']['TotalCount'])
-    self.assertEquals(t2_query_count_after-t2_query_count_before, 1)
+    self.assertEqual(t2_query_count_after-t2_query_count_before, 1)
     # start tablet1 mysql
     utils.wait_procs([self.replica_tablet.start_mysql(),])
     # then restart replication, and write data, make sure we go back to healthy
@@ -1421,7 +1443,7 @@ class TestFailures(BaseTestCase):
         keyranges=[self.keyrange])
     tablet1_vars = utils.get_vars(self.replica_tablet.port)
     t1_query_count_after = int(tablet1_vars['Queries']['TotalCount'])
-    self.assertEquals(t1_query_count_after-t1_query_count_before, 1)
+    self.assertEqual(t1_query_count_after-t1_query_count_before, 1)
     # start tablet2
     self.tablet_start(self.replica_tablet2, 'replica')
     wait_for_endpoints(
@@ -1440,8 +1462,8 @@ class TestFailures(BaseTestCase):
     t1_query_count_after = int(tablet1_vars['Queries']['TotalCount'])
     tablet2_vars = utils.get_vars(self.replica_tablet2.port)
     t2_query_count_after = int(tablet2_vars['Queries']['TotalCount'])
-    self.assertEquals(t1_query_count_after-t1_query_count_before
-                      +t2_query_count_after-t2_query_count_before, 1)
+    self.assertEqual(t1_query_count_after-t1_query_count_before
+                     +t2_query_count_after-t2_query_count_before, 1)
     vtgate_conn.close()
 
   def test_bind_vars_in_exception_message(self):
@@ -1529,8 +1551,8 @@ class TestFailures(BaseTestCase):
     # The true upper limit is 2 seconds (1s * 2 retries as in
     # utils.py). To account for network latencies and other variances,
     # we keep an upper bound of 3 here.
-    self.assertTrue(
-        max(rt_times) < 3,
+    self.assertLess(
+        max(rt_times), 3,
         'at least one request did not fail-fast; round trip times: %s' %
         rt_times)
 
@@ -1584,7 +1606,7 @@ class TestFailures(BaseTestCase):
       self.fail('Failed with error %s %s' % (str(e), traceback.format_exc()))
     tablet1_vars = utils.get_vars(self.replica_tablet.port)
     t1_query_count_after = int(tablet1_vars['Queries']['TotalCount'])
-    self.assertEquals(t1_query_count_after-t1_query_count_before, 1)
+    self.assertEqual(t1_query_count_after-t1_query_count_before, 1)
     # start a long running query
     num_requests = 10
     pool = ThreadPool(processes=num_requests)

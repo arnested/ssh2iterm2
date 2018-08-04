@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package testlib
 
@@ -12,12 +24,12 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/youtube/vitess/go/vt/throttler"
-	"github.com/youtube/vitess/go/vt/throttler/grpcthrottlerserver"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/throttler"
+	"vitess.io/vitess/go/vt/throttler/grpcthrottlerserver"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
 
 	// The test uses the gRPC throttler client and server implementations.
-	_ "github.com/youtube/vitess/go/vt/throttler/grpcthrottlerclient"
+	_ "vitess.io/vitess/go/vt/throttler/grpcthrottlerclient"
 )
 
 // TestVtctlThrottlerCommands tests all vtctl commands from the
@@ -29,8 +41,8 @@ func TestVtctlThrottlerCommands(t *testing.T) {
 		t.Fatalf("Cannot listen: %v", err)
 	}
 	s := grpc.NewServer()
+	grpcthrottlerserver.RegisterServer(s, throttler.GlobalManager)
 	go s.Serve(listener)
-	grpcthrottlerserver.StartServer(s, throttler.GlobalManager)
 
 	addr := fmt.Sprintf("localhost:%v", listener.Addr().(*net.TCPAddr).Port)
 

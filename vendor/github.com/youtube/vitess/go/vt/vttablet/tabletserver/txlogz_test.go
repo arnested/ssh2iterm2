@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tabletserver
 
@@ -11,12 +23,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/callerid"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/tabletenv"
+	"vitess.io/vitess/go/streamlog"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/callerid"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
 )
 
+func testNotRedacted(t *testing.T, r *httptest.ResponseRecorder) {
+	if strings.Contains(r.Body.String(), "redacted") {
+		t.Errorf("/debug/txlogz unexpectedly redacted")
+	}
+}
+
+func testRedacted(t *testing.T, r *httptest.ResponseRecorder) {
+	if !strings.Contains(r.Body.String(), "redacted") {
+		t.Errorf("/debug/txlogz unexpectedly not redacted")
+	}
+}
+
 func testHandler(req *http.Request, t *testing.T) {
+	// Test with redactions off to start
+	*streamlog.RedactDebugUIQueries = false
+
 	response := httptest.NewRecorder()
 	tabletenv.TxLogger.Send("test msg")
 	txlogzHandler(response, req)
@@ -36,15 +64,25 @@ func testHandler(req *http.Request, t *testing.T) {
 	response = httptest.NewRecorder()
 	tabletenv.TxLogger.Send(txConn)
 	txlogzHandler(response, req)
+	testNotRedacted(t, response)
 	txConn.EndTime = txConn.StartTime.Add(time.Duration(2) * time.Second)
 	response = httptest.NewRecorder()
 	tabletenv.TxLogger.Send(txConn)
 	txlogzHandler(response, req)
+	testNotRedacted(t, response)
 	txConn.EndTime = txConn.StartTime.Add(time.Duration(500) * time.Millisecond)
 	response = httptest.NewRecorder()
 	tabletenv.TxLogger.Send(txConn)
 	txlogzHandler(response, req)
+	testNotRedacted(t, response)
 
+	// Test with redactions on
+	*streamlog.RedactDebugUIQueries = true
+	txlogzHandler(response, req)
+	testRedacted(t, response)
+
+	// Reset to default redaction state
+	*streamlog.RedactDebugUIQueries = false
 }
 
 func TestTxlogzHandler(t *testing.T) {

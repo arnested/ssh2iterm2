@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package stats
 
@@ -24,6 +36,15 @@ type CountTracker interface {
 	// the total count across all categories (e.g. timing.go does this).
 	Counts() map[string]int64
 }
+
+// wrappedCountTracker implements the CountTracker interface.
+// It is used in multidimensional.go to publish specific, one-dimensional
+// counters.
+type wrappedCountTracker struct {
+	f func() map[string]int64
+}
+
+func (t wrappedCountTracker) Counts() map[string]int64 { return t.f() }
 
 // Rates is capable of reporting the rate (typically QPS)
 // for any variable that satisfies the CountTracker interface.

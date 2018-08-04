@@ -1,20 +1,36 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package consultopo
 
 import (
 	"path"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/youtube/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo"
 )
 
 // NewMasterParticipation is part of the topo.Server interface
 func (s *Server) NewMasterParticipation(name, id string) (topo.MasterParticipation, error) {
 	// Create the lock here.
-	electionPath := path.Join(s.global.root, electionsPath, name)
-	l, err := s.global.client.LockOpts(&api.LockOptions{
+	electionPath := path.Join(s.root, electionsPath, name)
+	l, err := s.client.LockOpts(&api.LockOptions{
 		Key:   electionPath,
 		Value: []byte(id),
 	})
@@ -58,6 +74,13 @@ type consulMasterParticipation struct {
 
 // WaitForMastership is part of the topo.MasterParticipation interface.
 func (mp *consulMasterParticipation) WaitForMastership() (context.Context, error) {
+	// If Stop was already called, mp.done is closed, so we are interrupted.
+	select {
+	case <-mp.done:
+		return nil, topo.ErrInterrupted
+	default:
+	}
+
 	// Try to lock until mp.stop is closed.
 	lost, err := mp.lock.Lock(mp.stop)
 	if err != nil {
@@ -100,8 +123,8 @@ func (mp *consulMasterParticipation) Stop() {
 
 // GetCurrentMasterID is part of the topo.MasterParticipation interface
 func (mp *consulMasterParticipation) GetCurrentMasterID(ctx context.Context) (string, error) {
-	electionPath := path.Join(mp.s.global.root, electionsPath, mp.name)
-	pair, _, err := mp.s.global.kv.Get(electionPath, nil)
+	electionPath := path.Join(mp.s.root, electionsPath, mp.name)
+	pair, _, err := mp.s.kv.Get(electionPath, nil)
 	if err != nil {
 		return "", err
 	}

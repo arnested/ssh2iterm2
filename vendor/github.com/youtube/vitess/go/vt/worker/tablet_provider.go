@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package worker
 
 import (
@@ -5,12 +21,11 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/proto/topodata"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // tabletProvider defines an interface to pick a tablet for reading data.
@@ -20,7 +35,7 @@ type tabletProvider interface {
 
 	// returnTablet must be called after the tablet is no longer used and e.g.
 	// TabletTracker.Untrack() should get called for it.
-	returnTablet(*topodata.Tablet)
+	returnTablet(*topodatapb.Tablet)
 
 	// description returns a string which can be used in error messages e.g.
 	// the name of the keyspace and the shard.
@@ -31,11 +46,11 @@ type tabletProvider interface {
 // returns the one tablet which was set at creation.
 type singleTabletProvider struct {
 	ctx   context.Context
-	ts    topo.Server
+	ts    *topo.Server
 	alias *topodatapb.TabletAlias
 }
 
-func newSingleTabletProvider(ctx context.Context, ts topo.Server, alias *topodatapb.TabletAlias) *singleTabletProvider {
+func newSingleTabletProvider(ctx context.Context, ts *topo.Server, alias *topodatapb.TabletAlias) *singleTabletProvider {
 	return &singleTabletProvider{ctx, ts, alias}
 }
 
@@ -49,7 +64,7 @@ func (p *singleTabletProvider) getTablet() (*topodatapb.Tablet, error) {
 	return tablet.Tablet, err
 }
 
-func (p *singleTabletProvider) returnTablet(*topodata.Tablet) {}
+func (p *singleTabletProvider) returnTablet(*topodatapb.Tablet) {}
 
 func (p *singleTabletProvider) description() string {
 	return topoproto.TabletAliasString(p.alias)

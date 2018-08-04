@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package helpers
 
@@ -9,63 +21,74 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
-func createSetup(ctx context.Context, t *testing.T) (topo.Impl, topo.Impl) {
-	fromTS := memorytopo.New("test_cell")
-	toTS := memorytopo.New("test_cell")
+func createSetup(ctx context.Context, t *testing.T) (*topo.Server, *topo.Server) {
+	// Create a source and destination TS. They will have
+	// different generations, so we test using the Version for
+	// both works as expected.
+	fromTS := memorytopo.NewServer("test_cell")
+	toTS := memorytopo.NewServer("test_cell")
 
 	// create a keyspace and a couple tablets
 	if err := fromTS.CreateKeyspace(ctx, "test_keyspace", &topodatapb.Keyspace{}); err != nil {
 		t.Fatalf("cannot create keyspace: %v", err)
 	}
-	if err := fromTS.CreateShard(ctx, "test_keyspace", "0", &topodatapb.Shard{Cells: []string{"test_cell"}}); err != nil {
+	if err := fromTS.CreateShard(ctx, "test_keyspace", "0"); err != nil {
 		t.Fatalf("cannot create shard: %v", err)
 	}
-	tts := topo.Server{Impl: fromTS}
-	if err := tts.CreateTablet(ctx, &topodatapb.Tablet{
+	if _, err := fromTS.UpdateShardFields(ctx, "test_keyspace", "0", func(si *topo.ShardInfo) error {
+		si.Cells = []string{"test_cell"}
+		return nil
+	}); err != nil {
+		t.Fatalf("cannot update shard: %v", err)
+	}
+	tablet1 := &topodatapb.Tablet{
 		Alias: &topodatapb.TabletAlias{
 			Cell: "test_cell",
 			Uid:  123,
 		},
-		Hostname: "masterhost",
-		Ip:       "1.2.3.4",
+		Hostname:      "masterhost",
+		MysqlHostname: "masterhost",
 		PortMap: map[string]int32{
-			"vt":    8101,
-			"gprc":  8102,
-			"mysql": 3306,
+			"vt":   8101,
+			"gprc": 8102,
 		},
 		Keyspace:       "test_keyspace",
 		Shard:          "0",
 		Type:           topodatapb.TabletType_MASTER,
 		DbNameOverride: "",
 		KeyRange:       nil,
-	}); err != nil {
+	}
+	topoproto.SetMysqlPort(tablet1, 3306)
+	if err := fromTS.CreateTablet(ctx, tablet1); err != nil {
 		t.Fatalf("cannot create master tablet: %v", err)
 	}
-	if err := tts.CreateTablet(ctx, &topodatapb.Tablet{
+	tablet2 := &topodatapb.Tablet{
 		Alias: &topodatapb.TabletAlias{
 			Cell: "test_cell",
 			Uid:  234,
 		},
-		Ip: "2.3.4.5",
 		PortMap: map[string]int32{
-			"vt":    8101,
-			"grpc":  8102,
-			"mysql": 3306,
+			"vt":   8101,
+			"grpc": 8102,
 		},
-		Hostname: "slavehost",
+		Hostname:      "slavehost",
+		MysqlHostname: "slavehost",
 
 		Keyspace:       "test_keyspace",
 		Shard:          "0",
 		Type:           topodatapb.TabletType_REPLICA,
 		DbNameOverride: "",
 		KeyRange:       nil,
-	}); err != nil {
+	}
+	topoproto.SetMysqlPort(tablet2, 3306)
+	if err := fromTS.CreateTablet(ctx, tablet2); err != nil {
 		t.Fatalf("cannot create slave tablet: %v", err)
 	}
 
@@ -97,12 +120,12 @@ func TestBasic(t *testing.T) {
 		t.Fatalf("unexpected shards: %v", shards)
 	}
 	CopyShards(ctx, fromTS, toTS)
-	s, _, err := toTS.GetShard(ctx, "test_keyspace", "0")
+	si, err := toTS.GetShard(ctx, "test_keyspace", "0")
 	if err != nil {
 		t.Fatalf("cannot read shard: %v", err)
 	}
-	if len(s.Cells) != 1 || s.Cells[0] != "test_cell" {
-		t.Fatalf("bad shard data: %v", *s)
+	if len(si.Shard.Cells) != 1 || si.Shard.Cells[0] != "test_cell" {
+		t.Fatalf("bad shard data: %v", *si.Shard)
 	}
 
 	// check ShardReplication copy

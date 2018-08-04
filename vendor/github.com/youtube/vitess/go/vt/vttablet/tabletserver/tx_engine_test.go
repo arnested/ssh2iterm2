@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tabletserver
 
@@ -8,25 +20,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/tabletenv"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
 
 	"golang.org/x/net/context"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 func TestTxEngineClose(t *testing.T) {
 	db := setUpQueryExecutorTest(t)
 	defer db.Close()
 	testUtils := newTestUtils()
-	dbconfigs := testUtils.newDBConfigs(db)
+	dbcfgs := testUtils.newDBConfigs(db)
 	ctx := context.Background()
 	config := tabletenv.DefaultQsConfig
 	config.TransactionCap = 10
 	config.TransactionTimeout = 0.5
 	config.TxShutDownGracePeriod = 0
 	te := NewTxEngine(nil, config)
+	te.InitDBConfig(dbcfgs)
 
 	// Normal close.
-	te.Open(dbconfigs)
+	te.Open()
 	start := time.Now()
 	te.Close(false)
 	if diff := time.Now().Sub(start); diff > 500*time.Millisecond {
@@ -34,8 +48,8 @@ func TestTxEngineClose(t *testing.T) {
 	}
 
 	// Normal close with timeout wait.
-	te.Open(dbconfigs)
-	c, err := te.txPool.LocalBegin(ctx)
+	te.Open()
+	c, err := te.txPool.LocalBegin(ctx, &querypb.ExecuteOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,8 +61,8 @@ func TestTxEngineClose(t *testing.T) {
 	}
 
 	// Immediate close.
-	te.Open(dbconfigs)
-	c, err = te.txPool.LocalBegin(ctx)
+	te.Open()
+	c, err = te.txPool.LocalBegin(ctx, &querypb.ExecuteOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +75,8 @@ func TestTxEngineClose(t *testing.T) {
 
 	// Normal close with short grace period.
 	te.shutdownGracePeriod = 250 * time.Millisecond
-	te.Open(dbconfigs)
-	c, err = te.txPool.LocalBegin(ctx)
+	te.Open()
+	c, err = te.txPool.LocalBegin(ctx, &querypb.ExecuteOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +92,8 @@ func TestTxEngineClose(t *testing.T) {
 
 	// Normal close with short grace period, but pool gets empty early.
 	te.shutdownGracePeriod = 250 * time.Millisecond
-	te.Open(dbconfigs)
-	c, err = te.txPool.LocalBegin(ctx)
+	te.Open()
+	c, err = te.txPool.LocalBegin(ctx, &querypb.ExecuteOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +116,8 @@ func TestTxEngineClose(t *testing.T) {
 	}
 
 	// Immediate close, but connection is in use.
-	te.Open(dbconfigs)
-	c, err = te.txPool.LocalBegin(ctx)
+	te.Open()
+	c, err = te.txPool.LocalBegin(ctx, &querypb.ExecuteOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

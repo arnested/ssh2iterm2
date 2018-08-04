@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 /*
 Package testlib contains utility methods to include in unit tests to
@@ -18,23 +30,24 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 
-	"github.com/youtube/vitess/go/mysqlconn/fakesqldb"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vttablet/grpctmserver"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletconn"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletmanager"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/mysql/fakesqldb"
+	"vitess.io/vitess/go/vt/mysqlctl/fakemysqldaemon"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vttablet/grpctmserver"
+	"vitess.io/vitess/go/vt/vttablet/tabletconn"
+	"vitess.io/vitess/go/vt/vttablet/tabletmanager"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 
 	// import the gRPC client implementation for tablet manager
-	_ "github.com/youtube/vitess/go/vt/vttablet/grpctmclient"
+	_ "vitess.io/vitess/go/vt/vttablet/grpctmclient"
 
 	// import the gRPC client implementation for query service
-	_ "github.com/youtube/vitess/go/vt/vttablet/grpctabletconn"
+	_ "vitess.io/vitess/go/vt/vttablet/grpctabletconn"
 )
 
 // This file contains utility methods for unit tests.
@@ -47,15 +60,17 @@ import (
 // - a 'done' channel (used to terminate the fake event loop)
 type FakeTablet struct {
 	// Tablet and FakeMysqlDaemon are populated at NewFakeTablet time.
+	// We also create the RPCServer, so users can register more services
+	// before calling StartActionLoop().
 	Tablet          *topodatapb.Tablet
-	FakeMysqlDaemon *mysqlctl.FakeMysqlDaemon
+	FakeMysqlDaemon *fakemysqldaemon.FakeMysqlDaemon
+	RPCServer       *grpc.Server
 
 	// The following fields are created when we start the event loop for
 	// the tablet, and closed / cleared when we stop it.
-	// The Listener and RPCServer are used by the gRPC server.
-	Agent     *tabletmanager.ActionAgent
-	Listener  net.Listener
-	RPCServer *grpc.Server
+	// The Listener is used by the gRPC server.
+	Agent    *tabletmanager.ActionAgent
+	Listener net.Listener
 
 	// These optional fields are used if the tablet also needs to
 	// listen on the 'vt' port.
@@ -109,19 +124,20 @@ func NewFakeTablet(t *testing.T, wr *wrangler.Wrangler, cell string, uid uint32,
 		t.Fatalf("uid has to be between 0 and 99: %v", uid)
 	}
 	mysqlPort := int32(3300 + uid)
+	hostname := fmt.Sprintf("%v.%d", cell, uid)
 	tablet := &topodatapb.Tablet{
-		Alias:    &topodatapb.TabletAlias{Cell: cell, Uid: uid},
-		Hostname: fmt.Sprintf("%vhost", cell),
+		Alias:         &topodatapb.TabletAlias{Cell: cell, Uid: uid},
+		Hostname:      hostname,
+		MysqlHostname: hostname,
 		PortMap: map[string]int32{
-			"vt":    int32(8100 + uid),
-			"mysql": mysqlPort,
-			"grpc":  int32(8200 + uid),
+			"vt":   int32(8100 + uid),
+			"grpc": int32(8200 + uid),
 		},
-		Ip:       fmt.Sprintf("%v.0.0.1", 100+uid),
 		Keyspace: "test_keyspace",
 		Shard:    "0",
 		Type:     tabletType,
 	}
+	topoproto.SetMysqlPort(tablet, mysqlPort)
 	for _, option := range options {
 		option(tablet)
 	}
@@ -134,12 +150,13 @@ func NewFakeTablet(t *testing.T, wr *wrangler.Wrangler, cell string, uid uint32,
 	}
 
 	// create a FakeMysqlDaemon with the right information by default
-	fakeMysqlDaemon := mysqlctl.NewFakeMysqlDaemon(db)
+	fakeMysqlDaemon := fakemysqldaemon.NewFakeMysqlDaemon(db)
 	fakeMysqlDaemon.MysqlPort = mysqlPort
 
 	return &FakeTablet{
 		Tablet:          tablet,
 		FakeMysqlDaemon: fakeMysqlDaemon,
+		RPCServer:       grpc.NewServer(),
 		StartHTTPServer: startHTTPServer,
 	}
 }
@@ -151,7 +168,7 @@ func (ft *FakeTablet) StartActionLoop(t *testing.T, wr *wrangler.Wrangler) {
 		t.Fatalf("Agent for %v is already running", ft.Tablet.Alias)
 	}
 
-	// Listen on a random port for gRPC
+	// Listen on a random port for gRPC.
 	var err error
 	ft.Listener, err = net.Listen("tcp", ":0")
 	if err != nil {
@@ -159,7 +176,7 @@ func (ft *FakeTablet) StartActionLoop(t *testing.T, wr *wrangler.Wrangler) {
 	}
 	gRPCPort := int32(ft.Listener.Addr().(*net.TCPAddr).Port)
 
-	// if needed, listen on a random port for HTTP
+	// If needed, listen on a random port for HTTP.
 	vtPort := ft.Tablet.PortMap["vt"]
 	if ft.StartHTTPServer {
 		ft.HTTPListener, err = net.Listen("tcp", ":0")
@@ -174,17 +191,16 @@ func (ft *FakeTablet) StartActionLoop(t *testing.T, wr *wrangler.Wrangler) {
 		vtPort = int32(ft.HTTPListener.Addr().(*net.TCPAddr).Port)
 	}
 
-	// create a test agent on that port, and re-read the record
-	// (it has new ports and IP)
+	// Create a test agent on that port, and re-read the record
+	// (it has new ports and IP).
 	ft.Agent = tabletmanager.NewTestActionAgent(context.Background(), wr.TopoServer(), ft.Tablet.Alias, vtPort, gRPCPort, ft.FakeMysqlDaemon, nil)
 	ft.Tablet = ft.Agent.Tablet()
 
-	// create the gRPC server
-	ft.RPCServer = grpc.NewServer()
+	// Register the gRPC server, and starts listening.
 	grpctmserver.RegisterForTest(ft.RPCServer, ft.Agent)
 	go ft.RPCServer.Serve(ft.Listener)
 
-	// and wait for it to serve, so we don't start using it before it's
+	// And wait for it to serve, so we don't start using it before it's
 	// ready.
 	timeout := 5 * time.Second
 	step := 10 * time.Millisecond

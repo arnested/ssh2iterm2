@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -11,15 +23,15 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/mysqlctl/tmutils"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/mysqlctl/tmutils"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // VerticalSplitDiffWorker executes a diff between a destination shard and its
@@ -32,6 +44,7 @@ type VerticalSplitDiffWorker struct {
 	keyspace                string
 	shard                   string
 	minHealthyRdonlyTablets int
+	parallelDiffsCount      int
 	cleaner                 *wrangler.Cleaner
 
 	// populated during WorkerStateInit, read-only after that
@@ -48,7 +61,7 @@ type VerticalSplitDiffWorker struct {
 }
 
 // NewVerticalSplitDiffWorker returns a new VerticalSplitDiffWorker object.
-func NewVerticalSplitDiffWorker(wr *wrangler.Wrangler, cell, keyspace, shard string, minHealthyRdonlyTablets int) Worker {
+func NewVerticalSplitDiffWorker(wr *wrangler.Wrangler, cell, keyspace, shard string, minHealthyRdonlyTablets, parallelDiffsCount int) Worker {
 	return &VerticalSplitDiffWorker{
 		StatusWorker: NewStatusWorker(),
 		wr:           wr,
@@ -56,6 +69,7 @@ func NewVerticalSplitDiffWorker(wr *wrangler.Wrangler, cell, keyspace, shard str
 		keyspace:     keyspace,
 		shard:        shard,
 		minHealthyRdonlyTablets: minHealthyRdonlyTablets,
+		parallelDiffsCount:      parallelDiffsCount,
 		cleaner:                 &wrangler.Cleaner{},
 	}
 }
@@ -369,7 +383,7 @@ func (vsdw *VerticalSplitDiffWorker) diff(ctx context.Context) error {
 
 	// run the diffs, 8 at a time
 	vsdw.wr.Logger().Infof("Running the diffs...")
-	sem := sync2.NewSemaphore(8, 0)
+	sem := sync2.NewSemaphore(vsdw.parallelDiffsCount, 0)
 	for _, tableDefinition := range vsdw.destinationSchemaDefinition.TableDefinitions {
 		wg.Add(1)
 		go func(tableDefinition *tabletmanagerdatapb.TableDefinition) {

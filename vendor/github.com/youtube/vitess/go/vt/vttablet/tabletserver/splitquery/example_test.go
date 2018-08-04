@@ -1,11 +1,29 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package splitquery
 
 import (
 	"fmt"
 
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/schema"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/querytypes"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 func Example() {
@@ -19,9 +37,9 @@ func Example() {
 	// This schema can is typically derived from tabletserver.TabletServer.qe.se.
 	schema := map[string]*schema.Table{}
 	splitParams, err := NewSplitParamsGivenSplitCount(
-		querytypes.BoundQuery{
+		&querypb.BoundQuery{
 			Sql:           "SELECT * FROM table WHERE id > :id",
-			BindVariables: map[string]interface{}{"id": int64(5)},
+			BindVariables: map[string]*querypb.BindVariable{"id": sqltypes.Int64BindVariable(5)},
 		},
 		[]sqlparser.ColIdent{
 			sqlparser.NewColIdent("id"),
@@ -51,7 +69,7 @@ func Example() {
 	splitter := NewSplitter(splitParams, algorithm)
 
 	// 4. Call splitter.Split() to Split the query.
-	// The result is a slice of querytypes.QuerySplit objects (and an error object).
+	// The result is a slice of &querypb.QuerySplit objects (and an error object).
 	queryParts, err := splitter.Split()
 	if err != nil {
 		panic(fmt.Sprintf("splitter.Split() failed with: %v", err))

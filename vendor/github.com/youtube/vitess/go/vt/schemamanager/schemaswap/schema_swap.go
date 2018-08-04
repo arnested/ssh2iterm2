@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package schemaswap
 
 import (
@@ -11,21 +27,22 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/hook"
-	"github.com/youtube/vitess/go/vt/logutil"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	workflowpb "github.com/youtube/vitess/go/vt/proto/workflow"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vtctl"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/workflow"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/hook"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/mysqlctl"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	workflowpb "vitess.io/vitess/go/vt/proto/workflow"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/vtctl"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/workflow"
+	"vitess.io/vitess/go/vt/wrangler"
 )
 
 var (
@@ -79,7 +96,7 @@ type Swap struct {
 	swapID uint64
 
 	// topoServer is the topo server implementation used to discover the topology of the keyspace.
-	topoServer topo.Server
+	topoServer *topo.Server
 	// tabletClient is the client implementation used by the schema swap process to control
 	// all tablets in the keyspace.
 	tabletClient tmclient.TabletManagerClient
@@ -594,23 +611,23 @@ func (shardSwap *shardSchemaSwap) readShardMetadata(metadata *shardSwapMetadata,
 		return
 	}
 	for _, row := range queryResult.Rows {
-		switch row[0].String() {
+		switch row[0].ToString() {
 		case lastStartedMetadataName:
-			swapID, err := row[1].ParseUint64()
+			swapID, err := sqltypes.ToUint64(row[1])
 			if err != nil {
-				log.Warningf("Could not parse value of last started schema swap id ('%s'), ignoring the value: %v", row[1].String(), err)
+				log.Warningf("Could not parse value of last started schema swap id %v, ignoring the value: %v", row[1], err)
 			} else {
 				metadata.lastStartedSwap = swapID
 			}
 		case lastFinishedMetadataName:
-			swapID, err := row[1].ParseUint64()
+			swapID, err := sqltypes.ToUint64(row[1])
 			if err != nil {
-				log.Warningf("Could not parse value of last finished schema swap id ('%s'), ignoring the value: %v", row[1].String(), err)
+				log.Warningf("Could not parse value of last finished schema swap id %v, ignoring the value: %v", row[1], err)
 			} else {
 				metadata.lastFinishedSwap = swapID
 			}
 		case currentSQLMetadataName:
-			metadata.currentSQL = row[1].String()
+			metadata.currentSQL = row[1].ToString()
 		}
 	}
 }
@@ -626,10 +643,7 @@ func (shardSwap *shardSchemaSwap) writeStartedSwap() error {
 	queryBuf.WriteString("INSERT INTO _vt.shard_metadata (name, value) VALUES ('")
 	queryBuf.WriteString(currentSQLMetadataName)
 	queryBuf.WriteString("',")
-	sqlValue, err := sqltypes.BuildValue(shardSwap.parent.sql)
-	if err != nil {
-		return err
-	}
+	sqlValue := sqltypes.NewVarChar(shardSwap.parent.sql)
 	sqlValue.EncodeSQL(&queryBuf)
 	queryBuf.WriteString(") ON DUPLICATE KEY UPDATE value = ")
 	sqlValue.EncodeSQL(&queryBuf)
@@ -669,8 +683,7 @@ func (shardSwap *shardSchemaSwap) writeFinishedSwap() error {
 func (shardSwap *shardSchemaSwap) startHealthWatchers() error {
 	shardSwap.allTablets = make(map[string]*discovery.TabletStats)
 
-	shardSwap.tabletHealthCheck = discovery.NewHealthCheck(
-		*vtctl.HealthCheckTopologyRefresh, *vtctl.HealthcheckRetryDelay, *vtctl.HealthCheckTimeout)
+	shardSwap.tabletHealthCheck = discovery.NewHealthCheck(*vtctl.HealthcheckRetryDelay, *vtctl.HealthCheckTimeout)
 	shardSwap.tabletHealthCheck.SetListener(shardSwap, true /* sendDownEvents */)
 
 	topoServer := shardSwap.parent.topoServer
@@ -892,7 +905,7 @@ func (shardSwap *shardSchemaSwap) isSwapApplied(tablet *topodatapb.Tablet) (bool
 		// No such row means we need to apply the swap.
 		return false, nil
 	}
-	swapID, err := swapIDResult.Rows[0][0].ParseUint64()
+	swapID, err := sqltypes.ToUint64(swapIDResult.Rows[0][0])
 	if err != nil {
 		return false, err
 	}
@@ -1264,7 +1277,7 @@ func (shardSwap *shardSchemaSwap) reparentFromMaster(masterTablet *topodatapb.Ta
 	defer shardSwap.markStepDone(shardSwap.reparentUINode, &err)
 
 	shardSwap.addShardLog(fmt.Sprintf("Reparenting away from master %v", masterTablet.Alias))
-	if *vtctl.DisableActiveReparents {
+	if *mysqlctl.DisableActiveReparents {
 		hk := &hook.Hook{
 			Name: "reparent_away",
 		}

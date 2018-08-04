@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package endtoend
 
@@ -10,11 +22,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/youtube/vitess/go/vt/vttablet/endtoend/framework"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/rules"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/vttablet/endtoend/framework"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/rules"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
-func TestTableACLNoAccess(t *testing.T) {
+func TestTableACL(t *testing.T) {
 	client := framework.NewClient()
 
 	aclErr := "table acl error"
@@ -65,6 +80,17 @@ func TestTableACLNoAccess(t *testing.T) {
 	}, {
 		query: "alter table vitess_acl_all_user_read_only comment 'comment'",
 		err:   aclErr,
+	}, {
+		query: "select * from vitess_acl_read_only, vitess_acl_no_access",
+		err:   aclErr,
+	}, {
+		query: "delete from vitess_acl_read_write where key1=(select key1 from vitess_acl_no_access)",
+		err:   aclErr,
+	}, {
+		query: "delete from vitess_acl_read_write where key1=(select key1 from vitess_acl_read_only)",
+	}, {
+		query: "update vitess_acl_read_write join vitess_acl_read_only on 1!=1 set key1=1",
+		err:   aclErr,
 	}}
 
 	for _, tcase := range execCases {
@@ -76,7 +102,7 @@ func TestTableACLNoAccess(t *testing.T) {
 			continue
 		}
 		if err == nil || !strings.HasPrefix(err.Error(), tcase.err) {
-			t.Errorf("Error: %v, must start with %s", err, tcase.err)
+			t.Errorf("Execute(%s): Error: %v, must start with %s", tcase.query, err, tcase.err)
 		}
 	}
 
@@ -161,14 +187,14 @@ func TestQueryRules(t *testing.T) {
 
 	client := framework.NewClient()
 	query := "select * from vitess_test where intval=:asdfg"
-	bv := map[string]interface{}{"asdfg": 1}
+	bv := map[string]*querypb.BindVariable{"asdfg": sqltypes.Int64BindVariable(1)}
 	_, err = client.Execute(query, bv)
-	want = "disallowed due to rule: disallow bindvar 'asdfg'"
+	want = "disallowed due to rule: disallow bindvar 'asdfg' (CallerID: dev)"
 	if err == nil || err.Error() != want {
 		t.Errorf("Error: %v, want %s", err, want)
 	}
 	_, err = client.StreamExecute(query, bv)
-	want = "disallowed due to rule: disallow bindvar 'asdfg'"
+	want = "disallowed due to rule: disallow bindvar 'asdfg' (CallerID: dev)"
 	if err == nil || err.Error() != want {
 		t.Errorf("Error: %v, want %s", err, want)
 	}

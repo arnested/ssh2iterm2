@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package zk2topo
 
 import (
@@ -7,19 +23,15 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo"
 )
 
-// Watch is part of the topo.Backend interface
-func (zs *Server) Watch(ctx context.Context, cell, filePath string) (*topo.WatchData, <-chan *topo.WatchData, topo.CancelFunc) {
-	conn, root, err := zs.connForCell(ctx, cell)
-	if err != nil {
-		return &topo.WatchData{Err: err}, nil, nil
-	}
-	zkPath := path.Join(root, filePath)
+// Watch is part of the topo.Conn interface.
+func (zs *Server) Watch(ctx context.Context, filePath string) (*topo.WatchData, <-chan *topo.WatchData, topo.CancelFunc) {
+	zkPath := path.Join(zs.root, filePath)
 
 	// Get the initial value, set the initial watch
-	data, stats, watch, err := conn.GetW(ctx, zkPath)
+	data, stats, watch, err := zs.conn.GetW(ctx, zkPath)
 	if err != nil {
 		return &topo.WatchData{Err: convertError(err)}, nil, nil
 	}
@@ -71,7 +83,7 @@ func (zs *Server) Watch(ctx context.Context, cell, filePath string) (*topo.Watch
 			}
 
 			// Get the value again, and send it, or error.
-			data, stats, watch, err = conn.GetW(ctx, zkPath)
+			data, stats, watch, err = zs.conn.GetW(ctx, zkPath)
 			if err != nil {
 				c <- &topo.WatchData{Err: convertError(err)}
 				return

@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package tabletserver
 
 import (
@@ -7,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/callinfo"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/callinfo"
 )
 
 // QueryDetail is a simple wrapper for Query, Context and a killable conn.
@@ -22,7 +38,7 @@ type QueryDetail struct {
 type killable interface {
 	Current() string
 	ID() int64
-	Kill(string) error
+	Kill(message string, startTime time.Duration) error
 }
 
 // NewQueryDetail creates a new QueryDetail
@@ -63,7 +79,7 @@ func (ql *QueryList) Terminate(connID int64) error {
 	if qd == nil {
 		return fmt.Errorf("query %v not found", connID)
 	}
-	qd.conn.Kill("QueryList.Terminate()")
+	qd.conn.Kill("QueryList.Terminate()", time.Since(qd.start))
 	return nil
 }
 
@@ -72,7 +88,7 @@ func (ql *QueryList) TerminateAll() {
 	ql.mu.Lock()
 	defer ql.mu.Unlock()
 	for _, qd := range ql.queryDetails {
-		qd.conn.Kill("QueryList.TerminateAll()")
+		qd.conn.Kill("QueryList.TerminateAll()", time.Since(qd.start))
 	}
 }
 

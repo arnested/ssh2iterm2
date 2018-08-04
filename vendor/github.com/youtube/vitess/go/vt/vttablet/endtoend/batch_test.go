@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package endtoend
 
@@ -8,20 +20,19 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	"github.com/youtube/vitess/go/vt/vttablet/endtoend/framework"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/querytypes"
+	"vitess.io/vitess/go/sqltypes"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	"vitess.io/vitess/go/vt/vttablet/endtoend/framework"
 )
 
 func TestBatchRead(t *testing.T) {
 	client := framework.NewClient()
-	queries := []querytypes.BoundQuery{{
+	queries := []*querypb.BoundQuery{{
 		Sql:           "select * from vitess_a where id = :a",
-		BindVariables: map[string]interface{}{"a": 2},
+		BindVariables: map[string]*querypb.BindVariable{"a": sqltypes.Int64BindVariable(2)},
 	}, {
 		Sql:           "select * from vitess_b where id = :b",
-		BindVariables: map[string]interface{}{"b": 2},
+		BindVariables: map[string]*querypb.BindVariable{"b": sqltypes.Int64BindVariable(2)},
 	}}
 	qr1 := sqltypes.Result{
 		Fields: []*querypb.Field{{
@@ -67,10 +78,10 @@ func TestBatchRead(t *testing.T) {
 		RowsAffected: 1,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("1")),
-				sqltypes.MakeTrusted(sqltypes.Int32, []byte("2")),
-				sqltypes.MakeTrusted(sqltypes.VarChar, []byte("bcde")),
-				sqltypes.MakeTrusted(sqltypes.VarBinary, []byte("fghi")),
+				sqltypes.NewInt64(1),
+				sqltypes.NewInt32(2),
+				sqltypes.NewVarChar("bcde"),
+				sqltypes.NewVarBinary("fghi"),
 			},
 		},
 	}
@@ -99,8 +110,8 @@ func TestBatchRead(t *testing.T) {
 		RowsAffected: 1,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("1")),
-				sqltypes.MakeTrusted(sqltypes.Int32, []byte("2")),
+				sqltypes.NewInt64(1),
+				sqltypes.NewInt32(2),
 			},
 		},
 	}
@@ -118,7 +129,7 @@ func TestBatchRead(t *testing.T) {
 
 func TestBatchTransaction(t *testing.T) {
 	client := framework.NewClient()
-	queries := []querytypes.BoundQuery{{
+	queries := []*querypb.BoundQuery{{
 		Sql: "insert into vitess_test values(4, null, null, null)",
 	}, {
 		Sql: "select * from vitess_test where intval = 4",
@@ -128,7 +139,7 @@ func TestBatchTransaction(t *testing.T) {
 
 	wantRows := [][]sqltypes.Value{
 		{
-			sqltypes.MakeTrusted(sqltypes.Int32, []byte("4")),
+			sqltypes.NewInt32(4),
 			{},
 			{},
 			{},
@@ -157,7 +168,7 @@ func TestBatchTransaction(t *testing.T) {
 
 	// In transaction, AsTransaction false
 	func() {
-		err = client.Begin()
+		err = client.Begin(false)
 		if err != nil {
 			t.Error(err)
 			return
@@ -175,7 +186,7 @@ func TestBatchTransaction(t *testing.T) {
 
 	// In transaction, AsTransaction true
 	func() {
-		err = client.Begin()
+		err = client.Begin(false)
 		if err != nil {
 			t.Error(err)
 			return

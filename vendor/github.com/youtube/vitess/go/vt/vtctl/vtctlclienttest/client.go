@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package vtctlclienttest contains the testsuite against which each
 // RPC implementation of the vtctlclient interface must be tested.
@@ -20,16 +32,17 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/vtctl/vtctlclient"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vtctl/vtctlclient"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
 
 	// import the gRPC client implementation for tablet manager
-	_ "github.com/youtube/vitess/go/vt/vttablet/grpctmclient"
+	_ "vitess.io/vitess/go/vt/vttablet/grpctmclient"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func init() {
@@ -39,28 +52,28 @@ func init() {
 }
 
 // CreateTopoServer returns the test topo server properly configured
-func CreateTopoServer(t *testing.T) topo.Server {
+func CreateTopoServer(t *testing.T) *topo.Server {
 	return memorytopo.NewServer("cell1")
 }
 
 // TestSuite runs the test suite on the given topo server and client
-func TestSuite(t *testing.T, ts topo.Server, client vtctlclient.VtctlClient) {
+func TestSuite(t *testing.T, ts *topo.Server, client vtctlclient.VtctlClient) {
 	ctx := context.Background()
 
 	// Create a fake tablet
 	tablet := &topodatapb.Tablet{
-		Alias:    &topodatapb.TabletAlias{Cell: "cell1", Uid: 1},
-		Hostname: "localhost",
-		Ip:       "10.11.12.13",
+		Alias:         &topodatapb.TabletAlias{Cell: "cell1", Uid: 1},
+		Hostname:      "localhost",
+		MysqlHostname: "localhost",
 		PortMap: map[string]int32{
-			"vt":    3333,
-			"mysql": 3334,
+			"vt": 3333,
 		},
 
 		Tags:     map[string]string{"tag": "value"},
 		Keyspace: "test_keyspace",
 		Type:     topodatapb.TabletType_MASTER,
 	}
+	topoproto.SetMysqlPort(tablet, 3334)
 	if err := ts.CreateTablet(ctx, tablet); err != nil {
 		t.Errorf("CreateTablet: %v", err)
 	}

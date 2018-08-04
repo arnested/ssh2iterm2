@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tabletmanager
 
@@ -14,21 +26,22 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
-	"github.com/youtube/vitess/go/vt/mysqlctl/tmutils"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice/fakes"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletconn"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/binlog/binlogplayer"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/mysqlctl/fakemysqldaemon"
+	"vitess.io/vitess/go/vt/mysqlctl/tmutils"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
+	"vitess.io/vitess/go/vt/vttablet/queryservice/fakes"
+	"vitess.io/vitess/go/vt/vttablet/tabletconn"
 
-	binlogdatapb "github.com/youtube/vitess/go/vt/proto/binlogdata"
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	binlogdatapb "vitess.io/vitess/go/vt/proto/binlogdata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // The tests in this file test the BinlogPlayerMap object.
@@ -70,7 +83,7 @@ func newFakeBinlogClient(t *testing.T, expectedDialUID uint32) *fakeBinlogClient
 }
 
 // Dial is part of the binlogplayer.Client interface
-func (fbc *fakeBinlogClient) Dial(tablet *topodatapb.Tablet, connTimeout time.Duration) error {
+func (fbc *fakeBinlogClient) Dial(tablet *topodatapb.Tablet) error {
 	if fbc.expectedDialUID != tablet.Alias.Uid {
 		fbc.t.Errorf("fakeBinlogClient.Dial expected uid %v got %v", fbc.expectedDialUID, tablet.Alias.Uid)
 	}
@@ -136,7 +149,7 @@ func (ftc *fakeTabletConn) StreamHealth(ctx context.Context, callback func(*quer
 
 // createSourceTablet is a helper method to create the source tablet
 // in the given keyspace/shard.
-func createSourceTablet(t *testing.T, name string, ts topo.Server, keyspace, shard string) {
+func createSourceTablet(t *testing.T, name string, ts *topo.Server, keyspace, shard string) {
 	vshard, kr, err := topo.ValidateShardName(shard)
 	if err != nil {
 		t.Fatalf("ValidateShardName(%v) failed: %v", shard, err)
@@ -162,7 +175,7 @@ func createSourceTablet(t *testing.T, name string, ts topo.Server, keyspace, sha
 
 	// register a tablet conn dialer that will return the instance
 	// we want
-	tabletconn.RegisterDialer(name, func(tablet *topodatapb.Tablet, timeout time.Duration) (queryservice.QueryService, error) {
+	tabletconn.RegisterDialer(name, func(tablet *topodatapb.Tablet, failFast grpcclient.FailFast) (queryservice.QueryService, error) {
 		return &fakeTabletConn{
 			QueryService: fakes.ErrorQueryService,
 			tablet:       tablet,
@@ -183,8 +196,8 @@ func checkBlpPositionList(t *testing.T, bpm *BinlogPlayerMap, vtClientSyncChanne
 			InsertID:     0,
 			Rows: [][]sqltypes.Value{
 				{
-					sqltypes.MakeString([]byte("MariaDB/0-1-1235")),
-					sqltypes.MakeString([]byte("")),
+					sqltypes.NewVarBinary("MariaDB/0-1-1235"),
+					sqltypes.NewVarBinary(""),
 				},
 			},
 		})
@@ -210,8 +223,8 @@ var mockedThrottlerSettings = &sqltypes.Result{
 	InsertID:     0,
 	Rows: [][]sqltypes.Value{
 		{
-			sqltypes.MakeString([]byte("9223372036854775807")), // max_tps
-			sqltypes.MakeString([]byte("9223372036854775807")), // max_replication_lag
+			sqltypes.NewVarBinary("9223372036854775807"), // max_tps
+			sqltypes.NewVarBinary("9223372036854775807"), // max_replication_lag
 		},
 	},
 }
@@ -249,7 +262,7 @@ func TestBinlogPlayerMapHorizontalSplit(t *testing.T) {
 	// create the BinlogPlayerMap on the local tablet
 	// (note that local tablet is never in the topology, we don't
 	// need it there at all)
-	mysqlDaemon := &mysqlctl.FakeMysqlDaemon{MysqlPort: 3306}
+	mysqlDaemon := &fakemysqldaemon.FakeMysqlDaemon{MysqlPort: 3306}
 	vtClientSyncChannel := make(chan *binlogplayer.VtClientMock)
 	bpm := NewBinlogPlayerMap(ts, mysqlDaemon, func() binlogplayer.VtClient {
 		return <-vtClientSyncChannel
@@ -316,8 +329,8 @@ func TestBinlogPlayerMapHorizontalSplit(t *testing.T) {
 		InsertID:     0,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeString([]byte("MariaDB/0-1-1234")),
-				sqltypes.MakeString([]byte("")),
+				sqltypes.NewVarBinary("MariaDB/0-1-1234"),
+				sqltypes.NewVarBinary(""),
 			},
 		},
 	})
@@ -435,7 +448,7 @@ func TestBinlogPlayerMapHorizontalSplitStopStartUntil(t *testing.T) {
 	// create the BinlogPlayerMap on the local tablet
 	// (note that local tablet is never in the topology, we don't
 	// need it there at all)
-	mysqlDaemon := &mysqlctl.FakeMysqlDaemon{MysqlPort: 3306}
+	mysqlDaemon := &fakemysqldaemon.FakeMysqlDaemon{MysqlPort: 3306}
 	vtClientSyncChannel := make(chan *binlogplayer.VtClientMock)
 	bpm := NewBinlogPlayerMap(ts, mysqlDaemon, func() binlogplayer.VtClient {
 		return <-vtClientSyncChannel
@@ -486,8 +499,8 @@ func TestBinlogPlayerMapHorizontalSplitStopStartUntil(t *testing.T) {
 		InsertID:     0,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeString([]byte("MariaDB/0-1-1234")),
-				sqltypes.MakeString([]byte("")),
+				sqltypes.NewVarBinary("MariaDB/0-1-1234"),
+				sqltypes.NewVarBinary(""),
 			},
 		},
 	}
@@ -629,7 +642,7 @@ func TestBinlogPlayerMapVerticalSplit(t *testing.T) {
 	// (note that local tablet is never in the topology, we don't
 	// need it there at all)
 	// The schema will be used to resolve the table wildcards.
-	mysqlDaemon := &mysqlctl.FakeMysqlDaemon{
+	mysqlDaemon := &fakemysqldaemon.FakeMysqlDaemon{
 		MysqlPort: 3306,
 		Schema: &tabletmanagerdatapb.SchemaDefinition{
 			DatabaseSchema: "",
@@ -703,8 +716,8 @@ func TestBinlogPlayerMapVerticalSplit(t *testing.T) {
 		InsertID:     0,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeString([]byte("MariaDB/0-1-1234")),
-				sqltypes.MakeString([]byte("")),
+				sqltypes.NewVarBinary("MariaDB/0-1-1234"),
+				sqltypes.NewVarBinary(""),
 			},
 		},
 	})

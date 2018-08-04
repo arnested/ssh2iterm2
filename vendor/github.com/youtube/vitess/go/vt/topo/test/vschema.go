@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package test
 
@@ -8,24 +20,21 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/topo"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	vschemapb "github.com/youtube/vitess/go/vt/proto/vschema"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vschemapb "vitess.io/vitess/go/vt/proto/vschema"
 )
 
 // checkVSchema runs the tests on the VSchema part of the API
-func checkVSchema(t *testing.T, ts topo.Impl) {
+func checkVSchema(t *testing.T, ts *topo.Server) {
 	ctx := context.Background()
 	if err := ts.CreateKeyspace(ctx, "test_keyspace", &topodatapb.Keyspace{}); err != nil {
 		t.Fatalf("CreateKeyspace: %v", err)
 	}
 
-	shard := &topodatapb.Shard{
-		KeyRange: newKeyRange("b0-c0"),
-	}
-	if err := ts.CreateShard(ctx, "test_keyspace", "b0-c0", shard); err != nil {
+	if err := ts.CreateShard(ctx, "test_keyspace", "b0-c0"); err != nil {
 		t.Fatalf("CreateShard: %v", err)
 	}
 
@@ -36,36 +45,12 @@ func checkVSchema(t *testing.T, ts topo.Impl) {
 	}
 
 	err = ts.SaveVSchema(ctx, "test_keyspace", &vschemapb.Keyspace{
-		Sharded: true,
-		Vindexes: map[string]*vschemapb.Vindex{
-			"stfu1": {
-				Type: "stfu",
-				Params: map[string]string{
-					"stfu1": "1",
-				},
-				Owner: "t1",
-			},
-			"stln1": {
-				Type:  "stln",
-				Owner: "t1",
-			},
-		},
 		Tables: map[string]*vschemapb.Table{
-			"t1": {
-				ColumnVindexes: []*vschemapb.ColumnVindex{
-					{
-						Column: "c1",
-						Name:   "stfu1",
-					}, {
-						Column: "c2",
-						Name:   "stln1",
-					},
-				},
-			},
+			"unsharded": {},
 		},
 	})
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 
 	got, err = ts.GetVSchema(ctx, "test_keyspace")
@@ -73,32 +58,8 @@ func checkVSchema(t *testing.T, ts topo.Impl) {
 		t.Error(err)
 	}
 	want = &vschemapb.Keyspace{
-		Sharded: true,
-		Vindexes: map[string]*vschemapb.Vindex{
-			"stfu1": {
-				Type: "stfu",
-				Params: map[string]string{
-					"stfu1": "1",
-				},
-				Owner: "t1",
-			},
-			"stln1": {
-				Type:  "stln",
-				Owner: "t1",
-			},
-		},
 		Tables: map[string]*vschemapb.Table{
-			"t1": {
-				ColumnVindexes: []*vschemapb.ColumnVindex{
-					{
-						Column: "c1",
-						Name:   "stfu1",
-					}, {
-						Column: "c2",
-						Name:   "stln1",
-					},
-				},
-			},
+			"unsharded": {},
 		},
 	}
 	if !proto.Equal(got, want) {

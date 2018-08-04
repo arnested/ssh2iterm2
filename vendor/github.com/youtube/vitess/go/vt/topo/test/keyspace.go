@@ -1,16 +1,32 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package test
 
 import (
 	"testing"
 
-	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/topo"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // checkKeyspace tests the keyspace part of the API
-func checkKeyspace(t *testing.T, ts topo.Impl) {
+func checkKeyspace(t *testing.T, ts *topo.Server) {
 	ctx := context.Background()
 	keyspaces, err := ts.GetKeyspaces(ctx)
 	if err != nil {
@@ -75,44 +91,31 @@ func checkKeyspace(t *testing.T, ts topo.Impl) {
 		t.Errorf("GetKeyspaces: want %v, got %v", []string{"test_keyspace", "test_keyspace2"}, keyspaces)
 	}
 
-	// re-read and update.
-	storedK, storedVersion, err := ts.GetKeyspace(ctx, "test_keyspace2")
+	// Re-read and update. Have to lock it, because UpdateKeyspace
+	// checks for the keyspace lock.
+	storedKI, err := ts.GetKeyspace(ctx, "test_keyspace2")
 	if err != nil {
 		t.Fatalf("GetKeyspace: %v", err)
 	}
-	storedK.ShardingColumnName = "other_id"
-	var newServedFroms []*topodatapb.Keyspace_ServedFrom
-	for _, ksf := range storedK.ServedFroms {
-		if ksf.TabletType == topodatapb.TabletType_MASTER {
-			continue
-		}
-		if ksf.TabletType == topodatapb.TabletType_REPLICA {
-			ksf.Keyspace = "test_keyspace4"
-		}
-		newServedFroms = append(newServedFroms, ksf)
-	}
-	storedK.ServedFroms = newServedFroms
-	_, err = ts.UpdateKeyspace(ctx, "test_keyspace2", storedK, storedVersion)
+	storedKI.Keyspace.ShardingColumnName = "other_id"
+	lockCtx, unlock, err := ts.LockKeyspace(ctx, "test_keyspace2", "fake-action")
 	if err != nil {
+		t.Fatalf("LockKeyspace: %v", err)
+	}
+	if err := ts.UpdateKeyspace(lockCtx, storedKI); err != nil {
 		t.Fatalf("UpdateKeyspace: %v", err)
 	}
-
-	// unconditional update
-	storedK.ShardingColumnType = topodatapb.KeyspaceIdType_BYTES
-	_, err = ts.UpdateKeyspace(ctx, "test_keyspace2", storedK, -1)
+	unlock(&err)
 	if err != nil {
-		t.Fatalf("UpdateKeyspace(-1): %v", err)
+		t.Fatalf("unlock(test_keyspace2): %v", err)
 	}
 
-	storedK, storedVersion, err = ts.GetKeyspace(ctx, "test_keyspace2")
+	// And read again to make sure it's good.
+	storedKI, err = ts.GetKeyspace(ctx, "test_keyspace2")
 	if err != nil {
 		t.Fatalf("GetKeyspace: %v", err)
 	}
-	if storedK.ShardingColumnName != "other_id" ||
-		storedK.ShardingColumnType != topodatapb.KeyspaceIdType_BYTES ||
-		len(storedK.ServedFroms) != 1 ||
-		storedK.ServedFroms[0].TabletType != topodatapb.TabletType_REPLICA ||
-		storedK.ServedFroms[0].Keyspace != "test_keyspace4" {
-		t.Errorf("GetKeyspace: unexpected keyspace, got %v", *storedK)
+	if storedKI.Keyspace.ShardingColumnName != "other_id" {
+		t.Errorf("UpdateKeyspace failed: got %v, want 'other_id'", storedKI.Keyspace.ShardingColumnName)
 	}
 }

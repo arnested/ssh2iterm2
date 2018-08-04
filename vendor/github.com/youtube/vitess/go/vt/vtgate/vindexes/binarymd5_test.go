@@ -1,11 +1,29 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package vindexes
 
 import (
+	"reflect"
 	"testing"
 
 	"strings"
 
-	"github.com/youtube/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/key"
 )
 
 var binVindex Vindex
@@ -26,7 +44,7 @@ func TestBinaryMD5String(t *testing.T) {
 	}
 }
 
-func TestBinaryMD5(t *testing.T) {
+func TestBinaryMD5Map(t *testing.T) {
 	tcases := []struct {
 		in, out string
 	}{{
@@ -40,60 +58,37 @@ func TestBinaryMD5(t *testing.T) {
 		out: "\f\xbcf\x11\xf5T\vЀ\x9a8\x8d\xc9Za[",
 	}}
 	for _, tcase := range tcases {
-		got, err := binVindex.(Unique).Map(nil, []interface{}{[]byte(tcase.in)})
+		got, err := binVindex.Map(nil, []sqltypes.Value{sqltypes.NewVarBinary(tcase.in)})
 		if err != nil {
 			t.Error(err)
 		}
-		out := string(got[0])
+		out := string(got[0].(key.DestinationKeyspaceID))
 		if out != tcase.out {
 			t.Errorf("Map(%#v): %#v, want %#v", tcase.in, out, tcase.out)
 		}
-		ok, err := binVindex.Verify(nil, []interface{}{[]byte(tcase.in)}, [][]byte{[]byte(tcase.out)})
-		if err != nil {
-			t.Error(err)
-		}
-		if !ok {
-			t.Errorf("Verify(%#v): false, want true", tcase.in)
-		}
-	}
-
-	//Negative Test Case
-	_, err := binVindex.(Unique).Map(nil, []interface{}{1})
-	want := "BinaryMd5.Map :unexpected data type for getBytes: int"
-	if err.Error() != want {
-		t.Error(err)
 	}
 }
 
-func TestBinaryMD5VerifyNeg(t *testing.T) {
-	_, err := binVindex.Verify(nil, []interface{}{[]byte("test1"), []byte("test2")}, [][]byte{[]byte("test1")})
-	want := "BinaryMD5_hash.Verify: length of ids 2 doesn't match length of ksids 1"
-	if err.Error() != want {
-		t.Error(err.Error())
-	}
-
-	ok, err := binVindex.Verify(nil, []interface{}{[]byte("test2")}, [][]byte{[]byte("test1")})
+func TestBinaryMD5Verify(t *testing.T) {
+	ids := []sqltypes.Value{sqltypes.NewVarBinary("Test"), sqltypes.NewVarBinary("TEst")}
+	ksids := [][]byte{[]byte("\f\xbcf\x11\xf5T\vЀ\x9a8\x8d\xc9Za["), []byte("\f\xbcf\x11\xf5T\vЀ\x9a8\x8d\xc9Za[")}
+	got, err := binVindex.Verify(nil, ids, ksids)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
-	if ok {
-		t.Errorf("Verify(%#v): true, want false", []byte("test2"))
-	}
-
-	_, err = binVindex.Verify(nil, []interface{}{1}, [][]byte{[]byte("test1")})
-	want = "BinaryMD5_hash.Verify: unexpected data type for getBytes: int"
-	if err.Error() != want {
-		t.Error(err)
+	want := []bool{true, false}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("binaryMD5.Verify: %v, want %v", got, want)
 	}
 }
 
 func TestSQLValue(t *testing.T) {
-	val := sqltypes.MakeTrusted(sqltypes.VarBinary, []byte("Test"))
-	got, err := binVindex.(Unique).Map(nil, []interface{}{val})
+	val := sqltypes.NewVarBinary("Test")
+	got, err := binVindex.Map(nil, []sqltypes.Value{val})
 	if err != nil {
 		t.Error(err)
 	}
-	out := string(got[0])
+	out := string(got[0].(key.DestinationKeyspaceID))
 	want := "\f\xbcf\x11\xf5T\vЀ\x9a8\x8d\xc9Za["
 	if out != want {
 		t.Errorf("Map(%#v): %#v, want %#v", val, out, want)

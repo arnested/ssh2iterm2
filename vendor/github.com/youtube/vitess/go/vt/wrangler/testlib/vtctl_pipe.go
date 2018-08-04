@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package testlib
 
@@ -16,16 +28,16 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/servenv"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vtctl/grpcvtctlserver"
-	"github.com/youtube/vitess/go/vt/vtctl/vtctlclient"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/servenv"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/vtctl/grpcvtctlserver"
+	"vitess.io/vitess/go/vt/vtctl/vtctlclient"
 
 	// we need to import the grpcvtctlclient library so the gRPC
 	// vtctl client is registered and can be used.
-	_ "github.com/youtube/vitess/go/vt/vtctl/grpcvtctlclient"
+	_ "vitess.io/vitess/go/vt/vtctl/grpcvtctlclient"
 )
 
 var servenvInitialized sync.Once
@@ -39,7 +51,7 @@ type VtctlPipe struct {
 }
 
 // NewVtctlPipe creates a new VtctlPipe based on the given topo server.
-func NewVtctlPipe(t *testing.T, ts topo.Server) *VtctlPipe {
+func NewVtctlPipe(t *testing.T, ts *topo.Server) *VtctlPipe {
 	// Register all vtctl commands
 	servenvInitialized.Do(func() {
 		// make sure we use the right protocol
@@ -62,7 +74,7 @@ func NewVtctlPipe(t *testing.T, ts topo.Server) *VtctlPipe {
 	go server.Serve(listener)
 
 	// Create a VtctlClient gRPC client to talk to the fake server
-	client, err := vtctlclient.New(listener.Addr().String(), 30*time.Second)
+	client, err := vtctlclient.New(listener.Addr().String())
 	if err != nil {
 		t.Fatalf("Cannot create client: %v", err)
 	}
