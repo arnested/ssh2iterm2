@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package cache
 
@@ -20,7 +32,7 @@ func (cv *CacheValue) Size() int {
 
 func TestInitialState(t *testing.T) {
 	cache := NewLRUCache(5)
-	l, sz, c, _ := cache.Stats()
+	l, sz, c, e, _ := cache.Stats()
 	if l != 0 {
 		t.Errorf("length = %v, want 0", l)
 	}
@@ -29,6 +41,9 @@ func TestInitialState(t *testing.T) {
 	}
 	if c != 5 {
 		t.Errorf("capacity = %v, want 5", c)
+	}
+	if e != 0 {
+		t.Errorf("evictions = %v, want 0", c)
 	}
 }
 
@@ -94,13 +109,13 @@ func TestSetUpdatesSize(t *testing.T) {
 	emptyValue := &CacheValue{0}
 	key := "key1"
 	cache.Set(key, emptyValue)
-	if _, sz, _, _ := cache.Stats(); sz != 0 {
+	if _, sz, _, _, _ := cache.Stats(); sz != 0 {
 		t.Errorf("cache.Size() = %v, expected 0", sz)
 	}
 	someValue := &CacheValue{20}
 	key = "key2"
 	cache.Set(key, someValue)
-	if _, sz, _, _ := cache.Stats(); sz != 20 {
+	if _, sz, _, _, _ := cache.Stats(); sz != 20 {
 		t.Errorf("cache.Size() = %v, expected 20", sz)
 	}
 }
@@ -125,14 +140,14 @@ func TestSetWithOldKeyUpdatesSize(t *testing.T) {
 	key := "key1"
 	cache.Set(key, emptyValue)
 
-	if _, sz, _, _ := cache.Stats(); sz != 0 {
+	if _, sz, _, _, _ := cache.Stats(); sz != 0 {
 		t.Errorf("cache.Size() = %v, expected %v", sz, 0)
 	}
 
 	someValue := &CacheValue{20}
 	cache.Set(key, someValue)
 	expected := int64(someValue.size)
-	if _, sz, _, _ := cache.Stats(); sz != expected {
+	if _, sz, _, _, _ := cache.Stats(); sz != expected {
 		t.Errorf("cache.Size() = %v, expected %v", sz, expected)
 	}
 }
@@ -179,7 +194,7 @@ func TestDelete(t *testing.T) {
 		t.Error("Expected item to be in cache.")
 	}
 
-	if _, sz, _, _ := cache.Stats(); sz != 0 {
+	if _, sz, _, _, _ := cache.Stats(); sz != 0 {
 		t.Errorf("cache.Size() = %v, expected 0", sz)
 	}
 
@@ -196,7 +211,7 @@ func TestClear(t *testing.T) {
 	cache.Set(key, value)
 	cache.Clear()
 
-	if _, sz, _, _ := cache.Stats(); sz != 0 {
+	if _, sz, _, _, _ := cache.Stats(); sz != 0 {
 		t.Errorf("cache.Size() = %v, expected 0 after Clear()", sz)
 	}
 }
@@ -211,13 +226,17 @@ func TestCapacityIsObeyed(t *testing.T) {
 	cache.Set("key1", value)
 	cache.Set("key2", value)
 	cache.Set("key3", value)
-	if _, sz, _, _ := cache.Stats(); sz != size {
+	if _, sz, _, _, _ := cache.Stats(); sz != size {
 		t.Errorf("cache.Size() = %v, expected %v", sz, size)
 	}
 	// Insert one more; something should be evicted to make room.
 	cache.Set("key4", value)
-	if _, sz, _, _ := cache.Stats(); sz != size {
+	_, sz, _, evictions, _ := cache.Stats()
+	if sz != size {
 		t.Errorf("post-evict cache.Size() = %v, expected %v", sz, size)
+	}
+	if evictions != 1 {
+		t.Errorf("post-evict cache.evictions = %v, expected 1", evictions)
 	}
 
 	// Check json stats
@@ -276,5 +295,9 @@ func TestLRUIsEvicted(t *testing.T) {
 	// Check oldest
 	if o := cache.Oldest(); o.Before(beforeKey2) || o.After(afterKey2) {
 		t.Errorf("cache.Oldest returned an unexpected value: got %v, expected a value between %v and %v", o, beforeKey2, afterKey2)
+	}
+
+	if e, want := cache.Evictions(), int64(1); e != want {
+		t.Errorf("evictions: %d, want: %d", e, want)
 	}
 }

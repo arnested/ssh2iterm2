@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package schema
 
@@ -12,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/youtube/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sqltypes"
 )
 
 func TestSchamazHandler(t *testing.T) {
@@ -23,12 +35,12 @@ func TestSchamazHandler(t *testing.T) {
 	tableC := NewTable("c")
 	tableD := NewTable("c")
 
-	tableA.AddColumn("column1", sqltypes.Int64, sqltypes.MakeTrusted(sqltypes.Int32, []byte("0")), "auto_increment")
-	tableA.AddIndex("index1").AddColumn("index_column", 1000)
+	tableA.AddColumn("column1", sqltypes.Int64, sqltypes.NewInt32(0), "auto_increment")
+	tableA.AddIndex("index1", true).AddColumn("index_column", 1000)
 	tableA.Type = NoType
 
-	tableB.AddColumn("column2", sqltypes.VarChar, sqltypes.MakeString([]byte("NULL")), "")
-	tableB.AddIndex("index2").AddColumn("index_column2", 200)
+	tableB.AddColumn("column2", sqltypes.VarChar, sqltypes.NewVarBinary("NULL"), "")
+	tableB.AddIndex("index2", false).AddColumn("index_column2", 200)
 	tableB.Type = Sequence
 
 	tableC.Type = Message
@@ -44,7 +56,7 @@ func TestSchamazHandler(t *testing.T) {
 	tableAPattern := []string{
 		`<td>a</td>`,
 		`<td>column1: INT64, autoinc, <br></td>`,
-		`<td>index1: \(index_column,\), \(1000,\)<br></td>`,
+		`<td>index1\(unique\): \(index_column,\), \(1000,\)<br></td>`,
 		`<td>none</td>`,
 	}
 	matched, err := regexp.Match(strings.Join(tableAPattern, `\s*`), body)
@@ -52,7 +64,7 @@ func TestSchamazHandler(t *testing.T) {
 		t.Fatalf("schemaz page does not contain table A with error: %v", err)
 	}
 	if !matched {
-		t.Fatalf("schemaz page does not contain table A")
+		t.Fatal("schemaz page does not contain table A")
 	}
 	tableBPattern := []string{
 		`<td>b</td>`,

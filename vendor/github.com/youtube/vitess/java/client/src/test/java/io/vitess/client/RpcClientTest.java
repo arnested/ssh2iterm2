@@ -1,22 +1,25 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.client;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.protobuf.ByteString;
-import io.vitess.client.cursor.Cursor;
-import io.vitess.client.cursor.Row;
-import io.vitess.proto.Query;
-import io.vitess.proto.Query.Field;
-import io.vitess.proto.Query.SplitQueryRequest.Algorithm;
-import io.vitess.proto.Topodata.KeyRange;
-import io.vitess.proto.Topodata.KeyspaceIdType;
-import io.vitess.proto.Topodata.ShardReference;
-import io.vitess.proto.Topodata.SrvKeyspace;
-import io.vitess.proto.Topodata.SrvKeyspace.KeyspacePartition;
-import io.vitess.proto.Topodata.TabletType;
-import io.vitess.proto.Vtgate.SplitQueryResponse;
-import io.vitess.proto.Vtrpc.CallerID;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLDataException;
 import java.sql.SQLException;
@@ -38,6 +41,20 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import io.vitess.client.cursor.Cursor;
+import io.vitess.client.cursor.Row;
+import io.vitess.proto.Query;
+import io.vitess.proto.Query.Field;
+import io.vitess.proto.Query.SplitQueryRequest.Algorithm;
+import io.vitess.proto.Topodata.KeyRange;
+import io.vitess.proto.Topodata.KeyspaceIdType;
+import io.vitess.proto.Topodata.ShardReference;
+import io.vitess.proto.Topodata.SrvKeyspace;
+import io.vitess.proto.Topodata.SrvKeyspace.KeyspacePartition;
+import io.vitess.proto.Topodata.TabletType;
+import io.vitess.proto.Vtgate.SplitQueryResponse;
+import io.vitess.proto.Vtrpc.CallerID;
 
 /**
  * RpcClientTest tests a given implementation of RpcClient against a mock vtgate server
@@ -127,6 +144,10 @@ public abstract class RpcClientTest {
 
   private static final String SESSION_ECHO = "in_transaction:true ";
 
+  private static final String NONTX_V3_SESSION_ECHO = "autocommit:true target_string:\"test_keyspace@replica\" options:<included_fields:ALL > ";
+
+  private static final String V3_SESSION_ECHO = "in_transaction:true target_string:\"test_keyspace@replica\" options:<included_fields:ALL > ";
+
   private static final CallerID CALLER_ID = CallerID.newBuilder().setPrincipal("test_principal")
       .setComponent("test_component").setSubcomponent("test_subcomponent").build();
   private static final String CALLER_ID_ECHO =
@@ -181,19 +202,19 @@ public abstract class RpcClientTest {
     boolean waited = false;
     while (DateTime.now().isBefore(deadline)) {
       try {
-        ctx = Context.getDefault().withDeadlineAfter(Duration.standardSeconds(4));
+        ctx = Context.getDefault().withDeadlineAfter(Duration.standardSeconds(30));
         conn.getSrvKeyspace(ctx, "small");
         // RPC succeeded. Stop testing.
         break;
       } catch (SQLTransientException e) {
         Throwable rootCause = Throwables.getRootCause(e);
-        if (!rootCause.getMessage().contains("Connection refused: ")) {
+        if (!rootCause.getMessage().contains("Connection refused")) {
           // Non-retryable exception. Fail for good.
           throw e;
         }
 
         System.out.format("Waiting until vtgateclienttest is ready and responds (got exception: %s)\n", rootCause);
-        Thread.sleep(TimeUnit.MILLISECONDS.toMillis(100));
+        Thread.sleep(100 /* milliseconds */);
         waited = true;
       }
     }
@@ -212,10 +233,8 @@ public abstract class RpcClientTest {
     echo = getEcho(conn.execute(ctx, ECHO_PREFIX + QUERY, BIND_VARS, TABLET_TYPE, ALL_FIELDS));
     Assert.assertEquals(CALLER_ID_ECHO, echo.get("callerId"));
     Assert.assertEquals(ECHO_PREFIX + QUERY, echo.get("query"));
-    Assert.assertEquals(KEYSPACE, echo.get("keyspace"));
     Assert.assertEquals(BIND_VARS_ECHO, echo.get("bindVars"));
-    Assert.assertEquals(TABLET_TYPE_ECHO, echo.get("tabletType"));
-    Assert.assertEquals(OPTIONS_ALL_FIELDS_ECHO, echo.get("options"));
+    Assert.assertEquals(NONTX_V3_SESSION_ECHO, echo.get("session"));
 
     echo = getEcho(
         conn.executeShards(ctx, ECHO_PREFIX + QUERY, KEYSPACE, SHARDS, BIND_VARS, TABLET_TYPE, ALL_FIELDS));
@@ -291,10 +310,8 @@ public abstract class RpcClientTest {
     echo = getEcho(conn.streamExecute(ctx, ECHO_PREFIX + QUERY, BIND_VARS, TABLET_TYPE, ALL_FIELDS));
     Assert.assertEquals(CALLER_ID_ECHO, echo.get("callerId"));
     Assert.assertEquals(ECHO_PREFIX + QUERY, echo.get("query"));
-    Assert.assertEquals(KEYSPACE, echo.get("keyspace"));
     Assert.assertEquals(BIND_VARS_ECHO, echo.get("bindVars"));
-    Assert.assertEquals(TABLET_TYPE_ECHO, echo.get("tabletType"));
-    Assert.assertEquals(OPTIONS_ALL_FIELDS_ECHO, echo.get("options"));
+    Assert.assertEquals(NONTX_V3_SESSION_ECHO, echo.get("session"));
 
     echo = getEcho(conn.streamExecuteShards(ctx, ECHO_PREFIX + QUERY, KEYSPACE, SHARDS, BIND_VARS,
         TABLET_TYPE, ALL_FIELDS));
@@ -336,12 +353,14 @@ public abstract class RpcClientTest {
     echo = getEcho(tx.execute(ctx, ECHO_PREFIX + QUERY, BIND_VARS, TABLET_TYPE, ALL_FIELDS));
     Assert.assertEquals(CALLER_ID_ECHO, echo.get("callerId"));
     Assert.assertEquals(ECHO_PREFIX + QUERY, echo.get("query"));
-    Assert.assertEquals(KEYSPACE, echo.get("keyspace"));
     Assert.assertEquals(BIND_VARS_ECHO, echo.get("bindVars"));
-    Assert.assertEquals(TABLET_TYPE_ECHO, echo.get("tabletType"));
-    Assert.assertEquals(SESSION_ECHO, echo.get("session"));
-    Assert.assertEquals("false", echo.get("notInTransaction"));
-    Assert.assertEquals(OPTIONS_ALL_FIELDS_ECHO, echo.get("options"));
+    Assert.assertEquals(V3_SESSION_ECHO, echo.get("session"));
+
+    // V3 returns additional session artifacts that V2
+    // doesn't care about. So, start with a new session
+    // before testing V2 functionality.
+    tx.rollback(ctx);
+    tx = conn.begin(ctx);
 
     echo = getEcho(
         tx.executeShards(ctx, ECHO_PREFIX + QUERY, KEYSPACE, SHARDS, BIND_VARS, TABLET_TYPE, ALL_FIELDS));

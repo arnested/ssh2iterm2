@@ -1,162 +1,213 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package planbuilder
 
 import (
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vtgate/engine"
+	"errors"
+
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vtgate/engine"
 )
 
+var _ builder = (*join)(nil)
+
 // join is used to build a Join primitive.
-// It's used to buid a normal join or a left join
+// It's used to build a normal join or a left join
 // operation.
 type join struct {
-	// LeftOrder and RightOrder store the order
-	// of the left node and right node. The Order
-	// of this join will be the same as RightOrder.
-	// This information is used for traversal.
-	LeftOrder, RightOrder int
+	order         int
+	resultColumns []*resultColumn
+
+	// leftOrder stores the order number of the left node. This is
+	// used for a b-tree style traversal towards the target route.
+	// Let us assume the following execution tree:
+	//      J9
+	//     /  \
+	//    /    \
+	//   J3     J8
+	//  / \    /  \
+	// R1  R2  J6  R7
+	//        / \
+	//        R4 R5
+	//
+	// In the above trees, the suffix numbers indicate the
+	// execution order. The leftOrder for the joins will then
+	// be as follows:
+	// J3: 1
+	// J6: 4
+	// J8: 6
+	// J9: 3
+	//
+	// The route to R4 would be:
+	// Go right from J9->J8 because Left(J9)==3, which is <4.
+	// Go left from J8->J6 because Left(J8)==6, which is >=4.
+	// Go left from J6->R4 because Left(J6)==4, the destination.
+	// Look for 'isOnLeft' to see how these numbers are used.
+	leftOrder int
+
 	// Left and Right are the nodes for the join.
 	Left, Right builder
-	symtab      *symtab
-	// Colsyms specifies the colsyms supplied by this
-	// join.
-	Colsyms []*colsym
-	ejoin   *engine.Join
+
+	ejoin *engine.Join
 }
 
-// newJoin makes a new joinBuilder using the two nodes. ajoin can be nil
-// if the join is on a ',' operator.
-func newJoin(lhs, rhs builder, ajoin *sqlparser.JoinTableExpr) (*join, error) {
+// newJoin makes a new join using the two planBuilder. ajoin can be nil
+// if the join is on a ',' operator. lpb will contain the resulting join.
+// rpb will be discarded.
+func newJoin(lpb, rpb *primitiveBuilder, ajoin *sqlparser.JoinTableExpr) error {
 	// This function converts ON clauses to WHERE clauses. The WHERE clause
 	// scope can see all tables, whereas the ON clause can only see the
 	// participants of the JOIN. However, since the ON clause doesn't allow
 	// external references, and the FROM clause doesn't allow duplicates,
 	// it's safe to perform this conversion and still expect the same behavior.
 
-	err := lhs.Symtab().Merge(rhs.Symtab())
-	if err != nil {
-		return nil, err
-	}
-	rhs.SetSymtab(lhs.Symtab())
-	rhs.SetOrder(lhs.Order())
 	opcode := engine.NormalJoin
-	if ajoin != nil && ajoin.Join == sqlparser.LeftJoinStr {
-		opcode = engine.LeftJoin
+	if ajoin != nil {
+		switch {
+		case ajoin.Join == sqlparser.LeftJoinStr:
+			opcode = engine.LeftJoin
+
+			// For left joins, we have to push the ON clause into the RHS.
+			// We do this before creating the join primitive.
+			// However, variables of LHS need to be visible. To allow this,
+			// we mark the LHS symtab as outer scope to the RHS, just like
+			// a subquery. This make the RHS treat the LHS symbols as external.
+			// This will prevent constructs from escaping out of the rpb scope.
+			rpb.st.Outer = lpb.st
+			if err := rpb.pushFilter(ajoin.Condition.On, sqlparser.WhereStr); err != nil {
+				return err
+			}
+		case ajoin.Condition.Using != nil:
+			return errors.New("unsupported: join with USING(column_list) clause")
+		}
 	}
-	jb := &join{
-		LeftOrder:  lhs.Order(),
-		RightOrder: rhs.Order(),
-		Left:       lhs,
-		Right:      rhs,
-		symtab:     lhs.Symtab(),
+	// Merge the symbol tables. In the case of a left join, we have to
+	// ideally create new symbols that originate from the join primitive.
+	// However, this is not worth it for now, because the Push functions
+	// verify that only valid constructs are passed through in case of left join.
+	if err := lpb.st.Merge(rpb.st); err != nil {
+		return err
+	}
+	lpb.bldr = &join{
+		Left:  lpb.bldr,
+		Right: rpb.bldr,
 		ejoin: &engine.Join{
 			Opcode: opcode,
-			Left:   lhs.Primitive(),
-			Right:  rhs.Primitive(),
+			Left:   lpb.bldr.Primitive(),
+			Right:  rpb.bldr.Primitive(),
 			Vars:   make(map[string]int),
 		},
 	}
-	if ajoin == nil {
-		return jb, nil
+	lpb.bldr.Reorder(0)
+	if ajoin == nil || opcode == engine.LeftJoin {
+		return nil
 	}
-	if opcode == engine.LeftJoin {
-		err := pushFilter(ajoin.On, rhs, sqlparser.WhereStr)
-		if err != nil {
-			return nil, err
-		}
-		rhs.SetRHS()
-		return jb, nil
-	}
-	err = pushFilter(ajoin.On, jb, sqlparser.WhereStr)
-	if err != nil {
-		return nil, err
-	}
-	return jb, nil
+	return lpb.pushFilter(ajoin.Condition.On, sqlparser.WhereStr)
 }
 
-// Symtab returns the associated symtab.
-func (jb *join) Symtab() *symtab {
-	return jb.symtab
-}
-
-// SetSymtab sets the symtab for the current node and its
-// non-subquery children.
-func (jb *join) SetSymtab(symtab *symtab) {
-	jb.symtab = symtab
-	jb.Left.SetSymtab(symtab)
-	jb.Right.SetSymtab(symtab)
-}
-
-// Order returns the order of the node.
+// Order satisfies the builder interface.
 func (jb *join) Order() int {
-	return jb.RightOrder
+	return jb.order
 }
 
-// SetOrder sets the order for the unerlying routes.
-func (jb *join) SetOrder(order int) {
-	jb.Left.SetOrder(order)
-	jb.LeftOrder = jb.Left.Order()
-	jb.Right.SetOrder(jb.LeftOrder)
-	jb.RightOrder = jb.Right.Order()
+// Reorder satisfies the builder interface.
+func (jb *join) Reorder(order int) {
+	jb.Left.Reorder(order)
+	jb.leftOrder = jb.Left.Order()
+	jb.Right.Reorder(jb.leftOrder)
+	jb.order = jb.Right.Order() + 1
 }
 
-// Primitve returns the built primitive.
+// Primitive satisfies the builder interface.
 func (jb *join) Primitive() engine.Primitive {
 	return jb.ejoin
 }
 
-// Leftmost returns the leftmost route.
-func (jb *join) Leftmost() *route {
-	return jb.Left.Leftmost()
+// First satisfies the builder interface.
+func (jb *join) First() builder {
+	return jb.Left.First()
 }
 
-// Join creates new joined node using the two plans.
-func (jb *join) Join(rhs builder, ajoin *sqlparser.JoinTableExpr) (builder, error) {
-	return newJoin(jb, rhs, ajoin)
+// ResultColumns satisfies the builder interface.
+func (jb *join) ResultColumns() []*resultColumn {
+	return jb.resultColumns
 }
 
-// SetRHS sets all underlying routes to RHS.
-func (jb *join) SetRHS() {
-	jb.Left.SetRHS()
-	jb.Right.SetRHS()
+// PushFilter satisfies the builder interface.
+func (jb *join) PushFilter(pb *primitiveBuilder, filter sqlparser.Expr, whereType string, origin builder) error {
+	if jb.isOnLeft(origin.Order()) {
+		return jb.Left.PushFilter(pb, filter, whereType, origin)
+	}
+	if jb.ejoin.Opcode == engine.LeftJoin {
+		return errors.New("unsupported: cross-shard left join and where clause")
+	}
+	return jb.Right.PushFilter(pb, filter, whereType, origin)
 }
 
-// PushSelect pushes the select expression into the join and
-// recursively down.
-func (jb *join) PushSelect(expr *sqlparser.NonStarExpr, rb *route) (colsym *colsym, colnum int, err error) {
-	if rb.Order() <= jb.LeftOrder {
-		colsym, colnum, err = jb.Left.PushSelect(expr, rb)
+// PushSelect satisfies the builder interface.
+func (jb *join) PushSelect(expr *sqlparser.AliasedExpr, origin builder) (rc *resultColumn, colnum int, err error) {
+	if jb.isOnLeft(origin.Order()) {
+		rc, colnum, err = jb.Left.PushSelect(expr, origin)
 		if err != nil {
 			return nil, 0, err
 		}
 		jb.ejoin.Cols = append(jb.ejoin.Cols, -colnum-1)
 	} else {
-		colsym, colnum, err = jb.Right.PushSelect(expr, rb)
+		// Pushing of non-trivial expressions not allowed for RHS of left joins.
+		if _, ok := expr.Expr.(*sqlparser.ColName); !ok && jb.ejoin.Opcode == engine.LeftJoin {
+			return nil, 0, errors.New("unsupported: cross-shard left join and column expressions")
+		}
+
+		rc, colnum, err = jb.Right.PushSelect(expr, origin)
 		if err != nil {
 			return nil, 0, err
 		}
 		jb.ejoin.Cols = append(jb.ejoin.Cols, colnum+1)
 	}
-	jb.Colsyms = append(jb.Colsyms, colsym)
-	return colsym, len(jb.Colsyms) - 1, nil
+	jb.resultColumns = append(jb.resultColumns, rc)
+	return rc, len(jb.resultColumns) - 1, nil
 }
 
-// PushOrderByNull pushes misc constructs to the underlying routes.
+// PushOrderByNull satisfies the builder interface.
 func (jb *join) PushOrderByNull() {
 	jb.Left.PushOrderByNull()
 	jb.Right.PushOrderByNull()
 }
 
-// PushMisc pushes misc constructs to the underlying routes.
+// PushOrderByRand satisfies the builder interface.
+func (jb *join) PushOrderByRand() {
+	jb.Left.PushOrderByRand()
+	jb.Right.PushOrderByRand()
+}
+
+// SetUpperLimit satisfies the builder interface.
+// The call is ignored because results get multiplied
+// as they join with others. So, it's hard to reliably
+// predict if a limit push down will work correctly.
+func (jb *join) SetUpperLimit(_ *sqlparser.SQLVal) {
+}
+
+// PushMisc satisfies the builder interface.
 func (jb *join) PushMisc(sel *sqlparser.Select) {
 	jb.Left.PushMisc(sel)
 	jb.Right.PushMisc(sel)
 }
 
-// Wireup performs the wireup for join.
+// Wireup satisfies the builder interface.
 func (jb *join) Wireup(bldr builder, jt *jointab) error {
 	err := jb.Right.Wireup(bldr, jt)
 	if err != nil {
@@ -165,15 +216,13 @@ func (jb *join) Wireup(bldr builder, jt *jointab) error {
 	return jb.Left.Wireup(bldr, jt)
 }
 
-// SupplyVar updates the join to make it supply the requested
-// column as a join variable. If the column is not already in
-// its list, it requests the LHS node to supply it using SupplyCol.
+// SupplyVar satisfies the builder interface.
 func (jb *join) SupplyVar(from, to int, col *sqlparser.ColName, varname string) {
-	if from > jb.LeftOrder {
+	if !jb.isOnLeft(from) {
 		jb.Right.SupplyVar(from, to, col, varname)
 		return
 	}
-	if to <= jb.LeftOrder {
+	if jb.isOnLeft(to) {
 		jb.Left.SupplyVar(from, to, col, varname)
 		return
 	}
@@ -181,52 +230,44 @@ func (jb *join) SupplyVar(from, to int, col *sqlparser.ColName, varname string) 
 		// Looks like somebody else already requested this.
 		return
 	}
-	switch meta := col.Metadata.(type) {
-	case *colsym:
-		for i, colsym := range jb.Colsyms {
-			if jb.ejoin.Cols[i] > 0 {
-				continue
-			}
-			if meta == colsym {
-				jb.ejoin.Vars[varname] = -jb.ejoin.Cols[i] - 1
-				return
-			}
+	c := col.Metadata.(*column)
+	for i, rc := range jb.resultColumns {
+		if jb.ejoin.Cols[i] > 0 {
+			continue
 		}
-		panic("unexpected: column not found")
-	case *tabsym:
-		ref := newColref(col)
-		for i, colsym := range jb.Colsyms {
-			if jb.ejoin.Cols[i] > 0 {
-				continue
-			}
-			if colsym.Underlying == ref {
-				jb.ejoin.Vars[varname] = -jb.ejoin.Cols[i] - 1
-				return
-			}
+		if rc.column == c {
+			jb.ejoin.Vars[varname] = -jb.ejoin.Cols[i] - 1
+			return
 		}
-		jb.ejoin.Vars[varname] = jb.Left.SupplyCol(ref)
-		return
 	}
-	panic("unreachable")
+	_, jb.ejoin.Vars[varname] = jb.Left.SupplyCol(col)
 }
 
-// SupplyCol changes the join to supply the requested column
-// name, and returns the result column number. If the column
-// is already in the list, it's reused.
-func (jb *join) SupplyCol(ref colref) int {
-	for i, colsym := range jb.Colsyms {
-		if colsym.Underlying == ref {
-			return i
+// SupplyCol satisfies the builder interface.
+func (jb *join) SupplyCol(col *sqlparser.ColName) (rc *resultColumn, colnum int) {
+	c := col.Metadata.(*column)
+	for i, rc := range jb.resultColumns {
+		if rc.column == c {
+			return rc, i
 		}
 	}
-	routeNumber := ref.Route().Order()
-	if routeNumber <= jb.LeftOrder {
-		ret := jb.Left.SupplyCol(ref)
-		jb.ejoin.Cols = append(jb.ejoin.Cols, -ret-1)
+
+	routeNumber := c.Origin().Order()
+	var sourceCol int
+	if jb.isOnLeft(routeNumber) {
+		rc, sourceCol = jb.Left.SupplyCol(col)
+		jb.ejoin.Cols = append(jb.ejoin.Cols, -sourceCol-1)
 	} else {
-		ret := jb.Right.SupplyCol(ref)
-		jb.ejoin.Cols = append(jb.ejoin.Cols, ret+1)
+		rc, sourceCol = jb.Right.SupplyCol(col)
+		jb.ejoin.Cols = append(jb.ejoin.Cols, sourceCol+1)
 	}
-	jb.Colsyms = append(jb.Colsyms, &colsym{Underlying: ref})
-	return len(jb.ejoin.Cols) - 1
+	jb.resultColumns = append(jb.resultColumns, rc)
+	return rc, len(jb.ejoin.Cols) - 1
+}
+
+// isOnLeft returns true if the specified route number
+// is on the left side of the join. If false, it means
+// the node is on the right.
+func (jb *join) isOnLeft(nodeNum int) bool {
+	return nodeNum <= jb.leftOrder
 }

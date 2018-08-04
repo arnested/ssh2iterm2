@@ -1,11 +1,29 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package splitquery
 
 import (
 	"fmt"
 
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/schema"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/querytypes"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 // Splitter is used to drive the splitting procedure.
@@ -41,9 +59,9 @@ func NewSplitter(splitParams *SplitParams, algorithm SplitAlgorithmInterface) *S
 }
 
 // Split does the actual work of splitting the query.
-// It returns a slice of querytypes.QuerySplit objects representing
+// It returns a slice of *querypb.QuerySplit objects representing
 // the query parts.
-func (splitter *Splitter) Split() ([]querytypes.QuerySplit, error) {
+func (splitter *Splitter) Split() ([]*querypb.QuerySplit, error) {
 	var boundaries []tuple
 	var err error
 	boundaries, err = splitter.algorithm.generateBoundaries()
@@ -51,10 +69,10 @@ func (splitter *Splitter) Split() ([]querytypes.QuerySplit, error) {
 		return nil, err
 	}
 	boundaries = append(boundaries, nil)
-	splits := []querytypes.QuerySplit{}
+	splits := []*querypb.QuerySplit{}
 	var start tuple
 	for _, end := range boundaries {
-		splits = append(splits, *splitter.constructQueryPart(start, end))
+		splits = append(splits, splitter.constructQueryPart(start, end))
 		start = end
 	}
 	return splits, nil
@@ -87,29 +105,31 @@ func (splitter *Splitter) initQueryPartSQLs() {
 		queryWithAdditionalWhere(splitter.splitParams.selectAST, splitColsGreaterThanOrEqualToStart))
 }
 
-func (splitter *Splitter) constructQueryPart(start, end tuple) *querytypes.QuerySplit {
-	result := &querytypes.QuerySplit{}
-	result.BindVariables = cloneBindVariables(splitter.splitParams.bindVariables)
+func (splitter *Splitter) constructQueryPart(start, end tuple) *querypb.QuerySplit {
+	result := &querypb.QuerySplit{}
+	result.Query = &querypb.BoundQuery{
+		BindVariables: cloneBindVariables(splitter.splitParams.bindVariables),
+	}
 	// TODO(erez): Fill result.RowCount
 	if start != nil {
 		populateBoundaryBindVariables(
-			start, splitter.startBindVariableNames, result.BindVariables)
+			start, splitter.startBindVariableNames, result.Query.BindVariables)
 	}
 	if end != nil {
 		populateBoundaryBindVariables(
-			end, splitter.endBindVariableNames, result.BindVariables)
+			end, splitter.endBindVariableNames, result.Query.BindVariables)
 	}
 	switch {
 	case start == nil && end == nil:
 		// If there's no upper or lower bound then just use the original query as the query part.
 		// This can happen if the boundaries list is empty.
-		result.Sql = splitter.splitParams.sql
+		result.Query.Sql = splitter.splitParams.sql
 	case start == nil && end != nil:
-		result.Sql = splitter.firstQueryPartSQL
+		result.Query.Sql = splitter.firstQueryPartSQL
 	case start != nil && end != nil:
-		result.Sql = splitter.middleQueryPartSQL
+		result.Query.Sql = splitter.middleQueryPartSQL
 	case start != nil && end == nil:
-		result.Sql = splitter.lastQueryPartSQL
+		result.Query.Sql = splitter.lastQueryPartSQL
 	}
 	return result
 }
@@ -122,13 +142,13 @@ func (splitter *Splitter) constructQueryPart(start, end tuple) *querytypes.Query
 // The ith bind-variable has name bindVariableNames[i] and value inputTuple[i].
 // The function panics if a bind variable name already exists in 'resultBindVariables'.
 func populateBoundaryBindVariables(
-	inputTuple tuple, bindVariableNames []string, resultBindVariables map[string]interface{}) {
+	inputTuple tuple, bindVariableNames []string, resultBindVariables map[string]*querypb.BindVariable) {
 	if len(inputTuple) != len(bindVariableNames) {
 		panic(fmt.Sprintf("len(inputTuple) != len(bindVariableNames): %v != %v",
 			len(inputTuple), len(bindVariableNames)))
 	}
 	for i := range inputTuple {
-		populateNewBindVariable(bindVariableNames[i], inputTuple[i].ToNative(), resultBindVariables)
+		populateNewBindVariable(bindVariableNames[i], sqltypes.ValueBindVariable(inputTuple[i]), resultBindVariables)
 	}
 }
 

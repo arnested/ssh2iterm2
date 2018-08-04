@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 %{
 package sqlparser
@@ -11,6 +23,10 @@ func setParseTree(yylex interface{}, stmt Statement) {
 
 func setAllowComments(yylex interface{}, allow bool) {
   yylex.(*Tokenizer).AllowComments = allow
+}
+
+func setDDL(yylex interface{}, ddl *DDL) {
+  yylex.(*Tokenizer).partialDDL = ddl
 }
 
 func incNesting(yylex interface{}) bool {
@@ -25,6 +41,9 @@ func decNesting(yylex interface{}) {
   yylex.(*Tokenizer).nesting--
 }
 
+// forceEOF forces the lexer to end prematurely. Not all SQL statements
+// are supported by the Parser, thus calling forceEOF will make the lexer
+// return EOF early.
 func forceEOF(yylex interface{}) {
   yylex.(*Tokenizer).ForceEOF = true
 }
@@ -32,54 +51,77 @@ func forceEOF(yylex interface{}) {
 %}
 
 %union {
-  empty       struct{}
-  statement   Statement
-  selStmt     SelectStatement
-  ins         *Insert
-  byt         byte
-  bytes       []byte
-  bytes2      [][]byte
-  str         string
-  selectExprs SelectExprs
-  selectExpr  SelectExpr
-  columns     Columns
-  colName     *ColName
-  tableExprs  TableExprs
-  tableExpr   TableExpr
-  tableName   *TableName
-  indexHints  *IndexHints
-  expr        Expr
-  exprs       Exprs
-  boolVal     BoolVal
-  colTuple    ColTuple
-  values      Values
-  valTuple    ValTuple
-  subquery    *Subquery
-  whens       []*When
-  when        *When
-  orderBy     OrderBy
-  order       *Order
-  limit       *Limit
-  updateExprs UpdateExprs
-  updateExpr  *UpdateExpr
-  colIdent    ColIdent
-  colIdents   []ColIdent
-  tableIdent  TableIdent
-  convertType *ConvertType
+  empty         struct{}
+  statement     Statement
+  selStmt       SelectStatement
+  ddl           *DDL
+  ins           *Insert
+  byt           byte
+  bytes         []byte
+  bytes2        [][]byte
+  str           string
+  strs          []string
+  selectExprs   SelectExprs
+  selectExpr    SelectExpr
+  columns       Columns
+  partitions    Partitions
+  colName       *ColName
+  tableExprs    TableExprs
+  tableExpr     TableExpr
+  joinCondition JoinCondition
+  tableName     TableName
+  tableNames    TableNames
+  indexHints    *IndexHints
+  expr          Expr
+  exprs         Exprs
+  boolVal       BoolVal
+  colTuple      ColTuple
+  values        Values
+  valTuple      ValTuple
+  subquery      *Subquery
+  whens         []*When
+  when          *When
+  orderBy       OrderBy
+  order         *Order
+  limit         *Limit
+  updateExprs   UpdateExprs
+  setExprs      SetExprs
+  updateExpr    *UpdateExpr
+  setExpr       *SetExpr
+  colIdent      ColIdent
+  tableIdent    TableIdent
+  convertType   *ConvertType
   aliasedTableName *AliasedTableExpr
+  TableSpec  *TableSpec
+  columnType    ColumnType
+  colKeyOpt     ColumnKeyOption
+  optVal        *SQLVal
+  LengthScaleOption LengthScaleOption
+  columnDefinition *ColumnDefinition
+  indexDefinition *IndexDefinition
+  indexInfo     *IndexInfo
+  indexOption   *IndexOption
+  indexOptions  []*IndexOption
+  indexColumn   *IndexColumn
+  indexColumns  []*IndexColumn
+  partDefs      []*PartitionDefinition
+  partDef       *PartitionDefinition
+  partSpec      *PartitionSpec
+  vindexParam   VindexParam
+  vindexParams  []VindexParam
 }
 
 %token LEX_ERROR
 %left <bytes> UNION
-%token <bytes> SELECT INSERT UPDATE DELETE FROM WHERE GROUP HAVING ORDER BY LIMIT OFFSET FOR
-%token <bytes> ALL DISTINCT AS EXISTS ASC DESC INTO DUPLICATE KEY DEFAULT SET LOCK
+%token <bytes> SELECT STREAM INSERT UPDATE DELETE FROM WHERE GROUP HAVING ORDER BY LIMIT OFFSET FOR
+%token <bytes> ALL DISTINCT AS EXISTS ASC DESC INTO DUPLICATE KEY DEFAULT SET LOCK KEYS
 %token <bytes> VALUES LAST_INSERT_ID
 %token <bytes> NEXT VALUE SHARE MODE
 %token <bytes> SQL_NO_CACHE SQL_CACHE
 %left <bytes> JOIN STRAIGHT_JOIN LEFT RIGHT INNER OUTER CROSS NATURAL USE FORCE
-%left <bytes> ON
+%left <bytes> ON USING
 %token <empty> '(' ',' ')'
-%token <bytes> ID HEX STRING INTEGRAL FLOAT HEXNUM VALUE_ARG LIST_ARG COMMENT
+%token <bytes> ID HEX STRING INTEGRAL FLOAT HEXNUM VALUE_ARG LIST_ARG COMMENT COMMENT_KEYWORD BIT_LITERAL
 %token <bytes> NULL TRUE FALSE
 
 // Precedence dictated by mysql. But the vitess grammar is simplified.
@@ -99,7 +141,7 @@ func forceEOF(yylex interface{}) {
 %left <bytes> '^'
 %right <bytes> '~' UNARY
 %left <bytes> COLLATE
-%right <bytes> BINARY
+%right <bytes> BINARY UNDERSCORE_BINARY
 %right <bytes> INTERVAL
 %nonassoc <bytes> '.'
 
@@ -109,15 +151,33 @@ func forceEOF(yylex interface{}) {
 %token <empty> JSON_EXTRACT_OP JSON_UNQUOTE_EXTRACT_OP
 
 // DDL Tokens
-%token <bytes> CREATE ALTER DROP RENAME ANALYZE
-%token <bytes> TABLE INDEX VIEW TO IGNORE IF UNIQUE USING
+%token <bytes> CREATE ALTER DROP RENAME ANALYZE ADD
+%token <bytes> SCHEMA TABLE INDEX VIEW TO IGNORE IF UNIQUE PRIMARY COLUMN CONSTRAINT SPATIAL FULLTEXT FOREIGN KEY_BLOCK_SIZE
 %token <bytes> SHOW DESCRIBE EXPLAIN DATE ESCAPE REPAIR OPTIMIZE TRUNCATE
+%token <bytes> MAXVALUE PARTITION REORGANIZE LESS THAN PROCEDURE TRIGGER
+%token <bytes> VINDEX VINDEXES
+%token <bytes> STATUS VARIABLES
+
+// Transaction Tokens
+%token <bytes> BEGIN START TRANSACTION COMMIT ROLLBACK
+
+// Type Tokens
+%token <bytes> BIT TINYINT SMALLINT MEDIUMINT INT INTEGER BIGINT INTNUM
+%token <bytes> REAL DOUBLE FLOAT_TYPE DECIMAL NUMERIC
+%token <bytes> TIME TIMESTAMP DATETIME YEAR
+%token <bytes> CHAR VARCHAR BOOL CHARACTER VARBINARY NCHAR
+%token <bytes> TEXT TINYTEXT MEDIUMTEXT LONGTEXT
+%token <bytes> BLOB TINYBLOB MEDIUMBLOB LONGBLOB JSON ENUM
+%token <bytes> GEOMETRY POINT LINESTRING POLYGON GEOMETRYCOLLECTION MULTIPOINT MULTILINESTRING MULTIPOLYGON
+
+// Type Modifiers
+%token <bytes> NULLX AUTO_INCREMENT APPROXNUM SIGNED UNSIGNED ZEROFILL
 
 // Supported SHOW tokens
-%token <bytes> DATABASES TABLES VITESS_KEYSPACES VITESS_SHARDS VSCHEMA_TABLES
+%token <bytes> DATABASES TABLES VITESS_KEYSPACES VITESS_SHARDS VITESS_TABLETS VSCHEMA_TABLES
 
-// Convert Type Tokens
-%token <bytes> INTEGER CHARACTER
+// SET tokens
+%token <bytes> NAMES CHARSET GLOBAL SESSION
 
 // Functions
 %token <bytes> CURRENT_TIMESTAMP DATABASE CURRENT_DATE
@@ -125,6 +185,7 @@ func forceEOF(yylex interface{}) {
 %token <bytes> UTC_DATE UTC_TIME UTC_TIMESTAMP
 %token <bytes> REPLACE
 %token <bytes> CONVERT CAST
+%token <bytes> SUBSTR SUBSTRING
 %token <bytes> GROUP_CONCAT SEPARATOR
 
 // Match
@@ -135,11 +196,13 @@ func forceEOF(yylex interface{}) {
 
 %type <statement> command
 %type <selStmt> select_statement base_select union_lhs union_rhs
-%type <statement> insert_statement update_statement delete_statement set_statement
-%type <statement> create_statement alter_statement rename_statement drop_statement
-%type <statement> analyze_statement show_statement other_statement
+%type <statement> stream_statement insert_statement update_statement delete_statement set_statement
+%type <statement> create_statement alter_statement rename_statement drop_statement truncate_statement
+%type <ddl> create_table_prefix
+%type <statement> analyze_statement show_statement use_statement other_statement
+%type <statement> begin_statement commit_statement rollback_statement
 %type <bytes2> comment_opt comment_list
-%type <str> union_op
+%type <str> union_op insert_or_replace
 %type <str> distinct_opt straight_join_opt cache_opt match_option separator_opt
 %type <expr> like_escape_opt
 %type <selectExprs> select_expression_list select_expression_list_opt
@@ -147,11 +210,12 @@ func forceEOF(yylex interface{}) {
 %type <expr> expression
 %type <tableExprs> from_opt table_references
 %type <tableExpr> table_reference table_factor join_table
-%type <str> inner_join outer_join natural_join
+%type <joinCondition> join_condition join_condition_opt on_expression_opt
+%type <tableNames> table_name_list
+%type <str> inner_join outer_join straight_join natural_join
 %type <tableName> table_name into_table_name
 %type <aliasedTableName> aliased_table_name
 %type <indexHints> index_hint_list
-%type <colIdents> index_list
 %type <expr> where_expression_opt
 %type <expr> condition
 %type <boolVal> boolean_value
@@ -177,22 +241,55 @@ func forceEOF(yylex interface{}) {
 %type <str> asc_desc_opt
 %type <limit> limit_opt
 %type <str> lock_opt
-%type <columns> ins_column_list
+%type <columns> ins_column_list column_list
+%type <partitions> opt_partition_clause partition_list
 %type <updateExprs> on_dup_opt
 %type <updateExprs> update_list
+%type <setExprs> set_list
+%type <bytes> charset_or_character_set
 %type <updateExpr> update_expression
+%type <setExpr> set_expression
 %type <bytes> for_from
-%type <str> ignore_opt
+%type <str> ignore_opt default_opt
 %type <byt> exists_opt
-%type <empty> not_exists_opt non_rename_operation to_opt index_opt constraint_opt using_opt
+%type <empty> not_exists_opt non_add_drop_or_rename_operation to_opt index_opt constraint_opt
 %type <bytes> reserved_keyword non_reserved_keyword
-%type <colIdent> sql_id reserved_sql_id col_alias as_ci_opt
+%type <colIdent> sql_id reserved_sql_id col_alias as_ci_opt using_opt
+%type <expr> charset_value
 %type <tableIdent> table_id reserved_table_id table_alias as_opt_id
 %type <empty> as_opt
 %type <empty> force_eof ddl_force_eof
 %type <str> charset
+%type <str> set_session_or_global show_session_or_global
 %type <convertType> convert_type
-%type <str> show_statement_type
+%type <columnType> column_type
+%type <columnType> int_type decimal_type numeric_type time_type char_type spatial_type
+%type <optVal> length_opt column_default_opt column_comment_opt on_update_opt
+%type <str> charset_opt collate_opt
+%type <boolVal> unsigned_opt zero_fill_opt
+%type <LengthScaleOption> float_length_opt decimal_length_opt
+%type <boolVal> null_opt auto_increment_opt
+%type <colKeyOpt> column_key_opt
+%type <strs> enum_values
+%type <columnDefinition> column_definition
+%type <indexDefinition> index_definition
+%type <str> index_or_key
+%type <str> equal_opt
+%type <TableSpec> table_spec table_column_list
+%type <str> table_option_list table_option table_opt_value
+%type <indexInfo> index_info
+%type <indexColumn> index_column
+%type <indexColumns> index_column_list
+%type <indexOption> index_option
+%type <indexOptions> index_option_list
+%type <partDefs> partition_definitions
+%type <partDef> partition_definition
+%type <partSpec> partition_operation
+%type <vindexParam> vindex_param
+%type <vindexParams> vindex_param_list vindex_params_opt
+%type <colIdent> vindex_type vindex_type_opt
+%type <bytes> alter_object_type
+
 %start any_command
 
 %%
@@ -212,6 +309,7 @@ command:
   {
     $$ = $1
   }
+| stream_statement
 | insert_statement
 | update_statement
 | delete_statement
@@ -220,8 +318,13 @@ command:
 | alter_statement
 | rename_statement
 | drop_statement
+| truncate_statement
 | analyze_statement
 | show_statement
+| use_statement
+| begin_statement
+| commit_statement
+| rollback_statement
 | other_statement
 
 select_statement:
@@ -240,6 +343,12 @@ select_statement:
 | SELECT comment_opt cache_opt NEXT num_val for_from table_name
   {
     $$ = &Select{Comments: Comments($2), Cache: $3, SelectExprs: SelectExprs{Nextval{Expr: $5}}, From: TableExprs{&AliasedTableExpr{Expr: $7}}}
+  }
+
+stream_statement:
+  STREAM comment_opt select_expression FROM table_name
+  {
+    $$ = &Stream{Comments: Comments($2), SelectExpr: $3, Table: $5}
   }
 
 // base_select is an unparenthesized SELECT with no order by clause or beyond.
@@ -271,49 +380,107 @@ union_rhs:
 
 
 insert_statement:
-  INSERT comment_opt ignore_opt into_table_name insert_data on_dup_opt
+  insert_or_replace comment_opt ignore_opt into_table_name opt_partition_clause insert_data on_dup_opt
   {
     // insert_data returns a *Insert pre-filled with Columns & Values
-    ins := $5
+    ins := $6
+    ins.Action = $1
     ins.Comments = $2
     ins.Ignore = $3
     ins.Table = $4
-    ins.OnDup = OnDup($6)
+    ins.Partitions = $5
+    ins.OnDup = OnDup($7)
     $$ = ins
   }
-| INSERT comment_opt ignore_opt into_table_name SET update_list on_dup_opt
+| insert_or_replace comment_opt ignore_opt into_table_name opt_partition_clause SET update_list on_dup_opt
   {
-    cols := make(Columns, 0, len($6))
-    vals := make(ValTuple, 0, len($7))
-    for _, updateList := range $6 {
+    cols := make(Columns, 0, len($7))
+    vals := make(ValTuple, 0, len($8))
+    for _, updateList := range $7 {
       cols = append(cols, updateList.Name.Name)
       vals = append(vals, updateList.Expr)
     }
-    $$ = &Insert{Comments: Comments($2), Ignore: $3, Table: $4, Columns: cols, Rows: Values{vals}, OnDup: OnDup($7)}
+    $$ = &Insert{Action: $1, Comments: Comments($2), Ignore: $3, Table: $4, Partitions: $5, Columns: cols, Rows: Values{vals}, OnDup: OnDup($8)}
+  }
+
+insert_or_replace:
+  INSERT
+  {
+    $$ = InsertStr
+  }
+| REPLACE
+  {
+    $$ = ReplaceStr
   }
 
 update_statement:
-  UPDATE comment_opt aliased_table_name SET update_list where_expression_opt order_by_opt limit_opt
+  UPDATE comment_opt table_references SET update_list where_expression_opt order_by_opt limit_opt
   {
-    $$ = &Update{Comments: Comments($2), Table: $3, Exprs: $5, Where: NewWhere(WhereStr, $6), OrderBy: $7, Limit: $8}
+    $$ = &Update{Comments: Comments($2), TableExprs: $3, Exprs: $5, Where: NewWhere(WhereStr, $6), OrderBy: $7, Limit: $8}
   }
 
 delete_statement:
-  DELETE comment_opt FROM table_name where_expression_opt order_by_opt limit_opt
+  DELETE comment_opt FROM table_name opt_partition_clause where_expression_opt order_by_opt limit_opt
   {
-    $$ = &Delete{Comments: Comments($2), Table: $4, Where: NewWhere(WhereStr, $5), OrderBy: $6, Limit: $7}
+    $$ = &Delete{Comments: Comments($2), TableExprs:  TableExprs{&AliasedTableExpr{Expr:$4}}, Partitions: $5, Where: NewWhere(WhereStr, $6), OrderBy: $7, Limit: $8}
+  }
+| DELETE comment_opt FROM table_name_list USING table_references where_expression_opt
+  {
+    $$ = &Delete{Comments: Comments($2), Targets: $4, TableExprs: $6, Where: NewWhere(WhereStr, $7)}
+  }
+| DELETE comment_opt table_name_list from_or_using table_references where_expression_opt
+  {
+    $$ = &Delete{Comments: Comments($2), Targets: $3, TableExprs: $5, Where: NewWhere(WhereStr, $6)}
+  }
+
+from_or_using:
+  FROM {}
+| USING {}
+
+table_name_list:
+  table_name
+  {
+    $$ = TableNames{$1}
+  }
+| table_name_list ',' table_name
+  {
+    $$ = append($$, $3)
+  }
+
+opt_partition_clause:
+  {
+    $$ = nil
+  }
+| PARTITION openb partition_list closeb
+  {
+  $$ = $3
   }
 
 set_statement:
-  SET comment_opt update_list
+  SET comment_opt set_list
   {
     $$ = &Set{Comments: Comments($2), Exprs: $3}
+   }
+| SET comment_opt set_session_or_global set_list
+  {
+    $$ = &Set{Comments: Comments($2), Scope: $3, Exprs: $4}
+   }
+
+set_session_or_global:
+  SESSION
+  {
+    $$ = SessionStr
+  }
+| GLOBAL
+  {
+    $$ = GlobalStr
   }
 
 create_statement:
-  CREATE TABLE not_exists_opt table_name ddl_force_eof
+  create_table_prefix table_spec
   {
-    $$ = &DDL{Action: CreateStr, NewName: $4}
+    $1.TableSpec = $2
+    $$ = $1
   }
 | CREATE constraint_opt INDEX ID using_opt ON table_name ddl_force_eof
   {
@@ -328,11 +495,660 @@ create_statement:
   {
     $$ = &DDL{Action: CreateStr, NewName: $5.ToViewName()}
   }
+| CREATE VINDEX sql_id vindex_type_opt vindex_params_opt
+  {
+    $$ = &DDL{Action: CreateVindexStr, VindexSpec: &VindexSpec{
+        Name: $3,
+        Type: $4,
+        Params: $5,
+    }}
+  }
+| CREATE DATABASE not_exists_opt ID ddl_force_eof
+  {
+    $$ = &DBDDL{Action: CreateStr, DBName: string($4)}
+  }
+| CREATE SCHEMA not_exists_opt ID ddl_force_eof
+  {
+    $$ = &DBDDL{Action: CreateStr, DBName: string($4)}
+  }
+
+vindex_type_opt:
+  {
+    $$ = NewColIdent("")
+  }
+| USING vindex_type
+  {
+    $$ = $2
+  }
+
+vindex_type:
+  ID
+  {
+    $$ = NewColIdent(string($1))
+  }
+
+vindex_params_opt:
+  {
+    var v []VindexParam
+    $$ = v
+  }
+| WITH vindex_param_list
+  {
+    $$ = $2
+  }
+
+vindex_param_list:
+  vindex_param
+  {
+    $$ = make([]VindexParam, 0, 4)
+    $$ = append($$, $1)
+  }
+| vindex_param_list ',' vindex_param
+  {
+    $$ = append($$, $3)
+  }
+
+vindex_param:
+  reserved_sql_id '=' table_opt_value
+  {
+    $$ = VindexParam{Key: $1, Val: $3}
+  }
+
+create_table_prefix:
+  CREATE TABLE not_exists_opt table_name
+  {
+    $$ = &DDL{Action: CreateStr, NewName: $4}
+    setDDL(yylex, $$)
+  }
+
+table_spec:
+  '(' table_column_list ')' table_option_list
+  {
+    $$ = $2
+    $$.Options = $4
+  }
+
+table_column_list:
+  column_definition
+  {
+    $$ = &TableSpec{}
+    $$.AddColumn($1)
+  }
+| table_column_list ',' column_definition
+  {
+    $$.AddColumn($3)
+  }
+| table_column_list ',' index_definition
+  {
+    $$.AddIndex($3)
+  }
+
+column_definition:
+  ID column_type null_opt column_default_opt on_update_opt auto_increment_opt column_key_opt column_comment_opt
+  {
+    $2.NotNull = $3
+    $2.Default = $4
+    $2.OnUpdate = $5
+    $2.Autoincrement = $6
+    $2.KeyOpt = $7
+    $2.Comment = $8
+    $$ = &ColumnDefinition{Name: NewColIdent(string($1)), Type: $2}
+  }
+column_type:
+  numeric_type unsigned_opt zero_fill_opt
+  {
+    $$ = $1
+    $$.Unsigned = $2
+    $$.Zerofill = $3
+  }
+| char_type
+| time_type
+| spatial_type
+
+numeric_type:
+  int_type length_opt
+  {
+    $$ = $1
+    $$.Length = $2
+  }
+| decimal_type
+  {
+    $$ = $1
+  }
+
+int_type:
+  BIT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| TINYINT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| SMALLINT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| MEDIUMINT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| INT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| INTEGER
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| BIGINT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+
+decimal_type:
+REAL float_length_opt
+  {
+    $$ = ColumnType{Type: string($1)}
+    $$.Length = $2.Length
+    $$.Scale = $2.Scale
+  }
+| DOUBLE float_length_opt
+  {
+    $$ = ColumnType{Type: string($1)}
+    $$.Length = $2.Length
+    $$.Scale = $2.Scale
+  }
+| FLOAT_TYPE float_length_opt
+  {
+    $$ = ColumnType{Type: string($1)}
+    $$.Length = $2.Length
+    $$.Scale = $2.Scale
+  }
+| DECIMAL decimal_length_opt
+  {
+    $$ = ColumnType{Type: string($1)}
+    $$.Length = $2.Length
+    $$.Scale = $2.Scale
+  }
+| NUMERIC decimal_length_opt
+  {
+    $$ = ColumnType{Type: string($1)}
+    $$.Length = $2.Length
+    $$.Scale = $2.Scale
+  }
+
+time_type:
+  DATE
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| TIME length_opt
+  {
+    $$ = ColumnType{Type: string($1), Length: $2}
+  }
+| TIMESTAMP length_opt
+  {
+    $$ = ColumnType{Type: string($1), Length: $2}
+  }
+| DATETIME length_opt
+  {
+    $$ = ColumnType{Type: string($1), Length: $2}
+  }
+| YEAR
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+
+char_type:
+  CHAR length_opt charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), Length: $2, Charset: $3, Collate: $4}
+  }
+| VARCHAR length_opt charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), Length: $2, Charset: $3, Collate: $4}
+  }
+| BINARY length_opt
+  {
+    $$ = ColumnType{Type: string($1), Length: $2}
+  }
+| VARBINARY length_opt
+  {
+    $$ = ColumnType{Type: string($1), Length: $2}
+  }
+| TEXT charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), Charset: $2, Collate: $3}
+  }
+| TINYTEXT charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), Charset: $2, Collate: $3}
+  }
+| MEDIUMTEXT charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), Charset: $2, Collate: $3}
+  }
+| LONGTEXT charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), Charset: $2, Collate: $3}
+  }
+| BLOB
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| TINYBLOB
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| MEDIUMBLOB
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| LONGBLOB
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| JSON
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| ENUM '(' enum_values ')' charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), EnumValues: $3, Charset: $5, Collate: $6}
+  }
+// need set_values / SetValues ?
+| SET '(' enum_values ')' charset_opt collate_opt
+  {
+    $$ = ColumnType{Type: string($1), EnumValues: $3, Charset: $5, Collate: $6}
+  }
+
+spatial_type:
+  GEOMETRY
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| POINT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| LINESTRING
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| POLYGON
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| GEOMETRYCOLLECTION
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| MULTIPOINT
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| MULTILINESTRING
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+| MULTIPOLYGON
+  {
+    $$ = ColumnType{Type: string($1)}
+  }
+
+enum_values:
+  STRING
+  {
+    $$ = make([]string, 0, 4)
+    $$ = append($$, "'" + string($1) + "'")
+  }
+| enum_values ',' STRING
+  {
+    $$ = append($1, "'" + string($3) + "'")
+  }
+
+length_opt:
+  {
+    $$ = nil
+  }
+| '(' INTEGRAL ')'
+  {
+    $$ = NewIntVal($2)
+  }
+
+float_length_opt:
+  {
+    $$ = LengthScaleOption{}
+  }
+| '(' INTEGRAL ',' INTEGRAL ')'
+  {
+    $$ = LengthScaleOption{
+        Length: NewIntVal($2),
+        Scale: NewIntVal($4),
+    }
+  }
+
+decimal_length_opt:
+  {
+    $$ = LengthScaleOption{}
+  }
+| '(' INTEGRAL ')'
+  {
+    $$ = LengthScaleOption{
+        Length: NewIntVal($2),
+    }
+  }
+| '(' INTEGRAL ',' INTEGRAL ')'
+  {
+    $$ = LengthScaleOption{
+        Length: NewIntVal($2),
+        Scale: NewIntVal($4),
+    }
+  }
+
+unsigned_opt:
+  {
+    $$ = BoolVal(false)
+  }
+| UNSIGNED
+  {
+    $$ = BoolVal(true)
+  }
+
+zero_fill_opt:
+  {
+    $$ = BoolVal(false)
+  }
+| ZEROFILL
+  {
+    $$ = BoolVal(true)
+  }
+
+// Null opt returns false to mean NULL (i.e. the default) and true for NOT NULL
+null_opt:
+  {
+    $$ = BoolVal(false)
+  }
+| NULL
+  {
+    $$ = BoolVal(false)
+  }
+| NOT NULL
+  {
+    $$ = BoolVal(true)
+  }
+
+column_default_opt:
+  {
+    $$ = nil
+  }
+| DEFAULT STRING
+  {
+    $$ = NewStrVal($2)
+  }
+| DEFAULT INTEGRAL
+  {
+    $$ = NewIntVal($2)
+  }
+| DEFAULT FLOAT
+  {
+    $$ = NewFloatVal($2)
+  }
+| DEFAULT NULL
+  {
+    $$ = NewValArg($2)
+  }
+| DEFAULT CURRENT_TIMESTAMP
+  {
+    $$ = NewValArg($2)
+  }
+| DEFAULT BIT_LITERAL
+  {
+    $$ = NewBitVal($2)
+  }
+
+on_update_opt:
+  {
+    $$ = nil
+  }
+| ON UPDATE CURRENT_TIMESTAMP
+{
+  $$ = NewValArg($3)
+}
+
+auto_increment_opt:
+  {
+    $$ = BoolVal(false)
+  }
+| AUTO_INCREMENT
+  {
+    $$ = BoolVal(true)
+  }
+
+charset_opt:
+  {
+    $$ = ""
+  }
+| CHARACTER SET ID
+  {
+    $$ = string($3)
+  }
+| CHARACTER SET BINARY
+  {
+    $$ = string($3)
+  }
+
+collate_opt:
+  {
+    $$ = ""
+  }
+| COLLATE ID
+  {
+    $$ = string($2)
+  }
+
+column_key_opt:
+  {
+    $$ = colKeyNone
+  }
+| PRIMARY KEY
+  {
+    $$ = colKeyPrimary
+  }
+| KEY
+  {
+    $$ = colKey
+  }
+| UNIQUE KEY
+  {
+    $$ = colKeyUniqueKey
+  }
+| UNIQUE
+  {
+    $$ = colKeyUnique
+  }
+
+column_comment_opt:
+  {
+    $$ = nil
+  }
+| COMMENT_KEYWORD STRING
+  {
+    $$ = NewStrVal($2)
+  }
+
+index_definition:
+  index_info '(' index_column_list ')' index_option_list
+  {
+    $$ = &IndexDefinition{Info: $1, Columns: $3, Options: $5}
+  }
+| index_info '(' index_column_list ')'
+  {
+    $$ = &IndexDefinition{Info: $1, Columns: $3}
+  }
+
+index_option_list:
+  index_option
+  {
+    $$ = []*IndexOption{$1}
+  }
+| index_option_list index_option
+  {
+    $$ = append($$, $2)
+  }
+
+index_option:
+  USING ID
+  {
+    $$ = &IndexOption{Name: string($1), Using: string($2)}
+  }
+| KEY_BLOCK_SIZE equal_opt INTEGRAL
+  {
+    // should not be string
+    $$ = &IndexOption{Name: string($1), Value: NewIntVal($3)}
+  }
+| COMMENT_KEYWORD STRING
+  {
+    $$ = &IndexOption{Name: string($1), Value: NewStrVal($2)}
+  }
+
+equal_opt:
+  /* empty */
+  {
+    $$ = ""
+  }
+| '='
+  {
+    $$ = string($1)
+  }
+
+index_info:
+  PRIMARY KEY
+  {
+    $$ = &IndexInfo{Type: string($1) + " " + string($2), Name: NewColIdent("PRIMARY"), Primary: true, Unique: true}
+  }
+| SPATIAL index_or_key ID
+  {
+    $$ = &IndexInfo{Type: string($1) + " " + string($2), Name: NewColIdent(string($3)), Spatial: true, Unique: false}
+  }
+| UNIQUE index_or_key ID
+  {
+    $$ = &IndexInfo{Type: string($1) + " " + string($2), Name: NewColIdent(string($3)), Unique: true}
+  }
+| UNIQUE ID
+  {
+    $$ = &IndexInfo{Type: string($1), Name: NewColIdent(string($2)), Unique: true}
+  }
+| index_or_key ID
+  {
+    $$ = &IndexInfo{Type: string($1), Name: NewColIdent(string($2)), Unique: false}
+  }
+
+index_or_key:
+    INDEX
+  {
+    $$ = string($1)
+  }
+  | KEY
+  {
+    $$ = string($1)
+  }
+
+index_column_list:
+  index_column
+  {
+    $$ = []*IndexColumn{$1}
+  }
+| index_column_list ',' index_column
+  {
+    $$ = append($$, $3)
+  }
+
+index_column:
+  sql_id length_opt
+  {
+      $$ = &IndexColumn{Column: $1, Length: $2}
+  }
+
+table_option_list:
+  {
+    $$ = ""
+  }
+| table_option
+  {
+    $$ = " " + string($1)
+  }
+| table_option_list ',' table_option
+  {
+    $$ = string($1) + ", " + string($3)
+  }
+
+// rather than explicitly parsing the various keywords for table options,
+// just accept any number of keywords, IDs, strings, numbers, and '='
+table_option:
+  table_opt_value
+  {
+    $$ = $1
+  }
+| table_option table_opt_value
+  {
+    $$ = $1 + " " + $2
+  }
+| table_option '=' table_opt_value
+  {
+    $$ = $1 + "=" + $3
+  }
+
+table_opt_value:
+  reserved_sql_id
+  {
+    $$ = $1.String()
+  }
+| STRING
+  {
+    $$ = "'" + string($1) + "'"
+  }
+| INTEGRAL
+  {
+    $$ = string($1)
+  }
 
 alter_statement:
-  ALTER ignore_opt TABLE table_name non_rename_operation force_eof
+  ALTER ignore_opt TABLE table_name non_add_drop_or_rename_operation force_eof
   {
     $$ = &DDL{Action: AlterStr, Table: $4, NewName: $4}
+  }
+| ALTER ignore_opt TABLE table_name ADD alter_object_type force_eof
+  {
+    $$ = &DDL{Action: AlterStr, Table: $4, NewName: $4}
+  }
+| ALTER ignore_opt TABLE table_name DROP alter_object_type force_eof
+  {
+    $$ = &DDL{Action: AlterStr, Table: $4, NewName: $4}
+  }
+| ALTER ignore_opt TABLE table_name ADD VINDEX sql_id '(' column_list ')' vindex_type_opt vindex_params_opt
+  {
+    $$ = &DDL{
+        Action: AddColVindexStr,
+        Table: $4,
+        VindexSpec: &VindexSpec{
+            Name: $7,
+            Type: $11,
+            Params: $12,
+        },
+        VindexCols: $9,
+      }
+  }
+| ALTER ignore_opt TABLE table_name DROP VINDEX sql_id
+  {
+    $$ = &DDL{
+        Action: DropColVindexStr,
+        Table: $4,
+        VindexSpec: &VindexSpec{
+            Name: $7,
+        },
+      }
   }
 | ALTER ignore_opt TABLE table_name RENAME to_opt table_name
   {
@@ -347,6 +1163,49 @@ alter_statement:
 | ALTER VIEW table_name ddl_force_eof
   {
     $$ = &DDL{Action: AlterStr, Table: $3.ToViewName(), NewName: $3.ToViewName()}
+  }
+| ALTER ignore_opt TABLE table_name partition_operation
+  {
+    $$ = &DDL{Action: AlterStr, Table: $4, PartitionSpec: $5}
+  }
+
+alter_object_type:
+  COLUMN
+| CONSTRAINT
+| FOREIGN
+| FULLTEXT
+| ID
+| INDEX
+| KEY
+| PRIMARY
+| SPATIAL
+| PARTITION
+| UNIQUE
+
+partition_operation:
+  REORGANIZE PARTITION sql_id INTO openb partition_definitions closeb
+  {
+    $$ = &PartitionSpec{Action: ReorganizeStr, Name: $3, Definitions: $6}
+  }
+
+partition_definitions:
+  partition_definition
+  {
+    $$ = []*PartitionDefinition{$1}
+  }
+| partition_definitions ',' partition_definition
+  {
+    $$ = append($1, $3)
+  }
+
+partition_definition:
+  PARTITION sql_id VALUES LESS THAN openb value_expression closeb
+  {
+    $$ = &PartitionDefinition{Name: $2, Limit: $7}
+  }
+| PARTITION sql_id VALUES LESS THAN openb MAXVALUE closeb
+  {
+    $$ = &PartitionDefinition{Name: $2, Maxvalue: true}
   }
 
 rename_statement:
@@ -364,7 +1223,7 @@ drop_statement:
     }
     $$ = &DDL{Action: DropStr, Table: $4, IfExists: exists}
   }
-| DROP INDEX ID ON table_name
+| DROP INDEX ID ON table_name ddl_force_eof
   {
     // Change this to an alter statement
     $$ = &DDL{Action: AlterStr, Table: $5, NewName: $5}
@@ -377,65 +1236,197 @@ drop_statement:
         }
     $$ = &DDL{Action: DropStr, Table: $4.ToViewName(), IfExists: exists}
   }
+| DROP DATABASE exists_opt ID
+  {
+    $$ = &DBDDL{Action: DropStr, DBName: string($4)}
+  }
+| DROP SCHEMA exists_opt ID
+  {
+    $$ = &DBDDL{Action: DropStr, DBName: string($4)}
+  }
 
+truncate_statement:
+  TRUNCATE TABLE table_name
+  {
+    $$ = &DDL{Action: TruncateStr, Table: $3}
+  }
+| TRUNCATE table_name
+  {
+    $$ = &DDL{Action: TruncateStr, Table: $2}
+  }
 analyze_statement:
   ANALYZE TABLE table_name
   {
     $$ = &DDL{Action: AlterStr, Table: $3, NewName: $3}
   }
 
-show_statement_type:
-  ID
-  {
-    $$ = ShowUnsupportedStr
-  }
-| reserved_keyword
-  {
-    if (string($1) == "databases"){
-      $$ = ShowDatabasesStr
-    } else if (string($1) == "tables"){
-      $$ = ShowTablesStr
-    } else if (string($1) == "vitess_keyspaces"){
-      $$ = ShowKeyspacesStr
-    } else if (string($1) == "vitess_shards"){
-      $$ = ShowShardsStr
-    } else if (string($1) == "vschema_tables"){
-      $$ = ShowVSchemaTablesStr
-    } else {
-      $$ = ShowUnsupportedStr
-    }
-  }
-| non_reserved_keyword
-{
-  $$ = ShowUnsupportedStr
-}
-
 show_statement:
-SHOW show_statement_type force_eof
-{
-  $$ = &Show{Type: $2}
-}
+  SHOW BINARY ID ddl_force_eof /* SHOW BINARY LOGS */
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+| SHOW CHARACTER SET ddl_force_eof
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+| SHOW CREATE DATABASE ddl_force_eof
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+/* Rule to handle SHOW CREATE EVENT, SHOW CREATE FUNCTION, etc. */
+| SHOW CREATE ID ddl_force_eof
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+| SHOW CREATE PROCEDURE ddl_force_eof
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+| SHOW CREATE TABLE ddl_force_eof
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+| SHOW CREATE TRIGGER ddl_force_eof
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+| SHOW CREATE VIEW ddl_force_eof
+  {
+    $$ = &Show{Type: string($2) + " " + string($3)}
+  }
+| SHOW DATABASES ddl_force_eof
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW INDEX ddl_force_eof
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW KEYS ddl_force_eof
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW PROCEDURE ddl_force_eof
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW show_session_or_global STATUS ddl_force_eof
+  {
+    $$ = &Show{Scope: $2, Type: string($3)}
+  }
+| SHOW TABLE ddl_force_eof
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW TABLES ddl_force_eof
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW show_session_or_global VARIABLES ddl_force_eof
+  {
+    $$ = &Show{Scope: $2, Type: string($3)}
+  }
+| SHOW VINDEXES
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW VINDEXES ON table_name
+  {
+    $$ = &Show{Type: string($2), OnTable: $4}
+  }
+| SHOW VITESS_KEYSPACES
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW VITESS_SHARDS
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW VITESS_TABLETS
+  {
+    $$ = &Show{Type: string($2)}
+  }
+| SHOW VSCHEMA_TABLES
+  {
+    $$ = &Show{Type: string($2)}
+  }
+/*
+ * Catch-all for show statements without vitess keywords:
+ *
+ *  SHOW BINARY LOGS
+ *  SHOW INVALID
+ */
+| SHOW ID ddl_force_eof
+  {
+    $$ = &Show{Type: string($2)}
+  }
+
+show_session_or_global:
+  /* empty */
+  {
+    $$ = ""
+  }
+| SESSION
+  {
+    $$ = SessionStr
+  }
+| GLOBAL
+  {
+    $$ = GlobalStr
+  }
+
+use_statement:
+  USE table_id
+  {
+    $$ = &Use{DBName: $2}
+  }
+| USE
+  {
+    $$ = &Use{DBName:TableIdent{v:""}}
+  }
+
+begin_statement:
+  BEGIN
+  {
+    $$ = &Begin{}
+  }
+| START TRANSACTION
+  {
+    $$ = &Begin{}
+  }
+
+commit_statement:
+  COMMIT
+  {
+    $$ = &Commit{}
+  }
+
+rollback_statement:
+  ROLLBACK
+  {
+    $$ = &Rollback{}
+  }
 
 other_statement:
-  DESCRIBE force_eof
+  DESC force_eof
   {
-    $$ = &Other{}
+    $$ = &OtherRead{}
+  }
+| DESCRIBE force_eof
+  {
+    $$ = &OtherRead{}
   }
 | EXPLAIN force_eof
   {
-    $$ = &Other{}
+    $$ = &OtherRead{}
   }
 | REPAIR force_eof
   {
-    $$ = &Other{}
+    $$ = &OtherAdmin{}
   }
 | OPTIMIZE force_eof
   {
-    $$ = &Other{}
-  }
-| TRUNCATE force_eof
-  {
-    $$ = &Other{}
+    $$ = &OtherAdmin{}
   }
 
 comment_opt:
@@ -528,15 +1519,15 @@ select_expression:
   }
 | expression as_ci_opt
   {
-    $$ = &NonStarExpr{Expr: $1, As: $2}
+    $$ = &AliasedExpr{Expr: $1, As: $2}
   }
 | table_id '.' '*'
   {
-    $$ = &StarExpr{TableName: &TableName{Name: $1}}
+    $$ = &StarExpr{TableName: TableName{Name: $1}}
   }
 | table_id '.' reserved_table_id '.' '*'
   {
-    $$ = &StarExpr{TableName: &TableName{Qualifier: $1, Name: $3}}
+    $$ = &StarExpr{TableName: TableName{Qualifier: $1, Name: $3}}
   }
 
 as_ci_opt:
@@ -561,7 +1552,7 @@ col_alias:
 
 from_opt:
   {
-    $$ = TableExprs{&AliasedTableExpr{Expr:&TableName{Name: NewTableIdent("dual")}}}
+    $$ = TableExprs{&AliasedTableExpr{Expr:TableName{Name: NewTableIdent("dual")}}}
   }
 | FROM table_references
   {
@@ -601,6 +1592,30 @@ table_name as_opt_id index_hint_list
   {
     $$ = &AliasedTableExpr{Expr:$1, As: $2, Hints: $3}
   }
+| table_name PARTITION openb partition_list closeb as_opt_id index_hint_list
+  {
+    $$ = &AliasedTableExpr{Expr:$1, Partitions: $4, As: $6, Hints: $7}
+  }
+
+column_list:
+  sql_id
+  {
+    $$ = Columns{$1}
+  }
+| column_list ',' sql_id
+  {
+    $$ = append($$, $3)
+  }
+
+partition_list:
+  sql_id
+  {
+    $$ = Partitions{$1}
+  }
+| partition_list ',' sql_id
+  {
+    $$ = append($$, $3)
+  }
 
 // There is a grammar conflict here:
 // 1: INSERT INTO a SELECT * FROM b JOIN c ON b.i = c.i
@@ -610,22 +1625,40 @@ table_name as_opt_id index_hint_list
 // first construct, which automatically makes the second construct a
 // syntax error. This is the same behavior as MySQL.
 join_table:
-  table_reference inner_join table_factor %prec JOIN
+  table_reference inner_join table_factor join_condition_opt
   {
-    $$ = &JoinTableExpr{LeftExpr: $1, Join: $2, RightExpr: $3}
+    $$ = &JoinTableExpr{LeftExpr: $1, Join: $2, RightExpr: $3, Condition: $4}
   }
-| table_reference inner_join table_factor ON expression
+| table_reference straight_join table_factor on_expression_opt
   {
-    $$ = &JoinTableExpr{LeftExpr: $1, Join: $2, RightExpr: $3, On: $5}
+    $$ = &JoinTableExpr{LeftExpr: $1, Join: $2, RightExpr: $3, Condition: $4}
   }
-| table_reference outer_join table_reference ON expression
+| table_reference outer_join table_reference join_condition
   {
-    $$ = &JoinTableExpr{LeftExpr: $1, Join: $2, RightExpr: $3, On: $5}
+    $$ = &JoinTableExpr{LeftExpr: $1, Join: $2, RightExpr: $3, Condition: $4}
   }
 | table_reference natural_join table_factor
   {
     $$ = &JoinTableExpr{LeftExpr: $1, Join: $2, RightExpr: $3}
   }
+
+join_condition:
+  ON expression
+  { $$ = JoinCondition{On: $2} }
+| USING '(' column_list ')'
+  { $$ = JoinCondition{Using: $3} }
+
+join_condition_opt:
+%prec JOIN
+  { $$ = JoinCondition{} }
+| join_condition
+  { $$ = $1 }
+
+on_expression_opt:
+%prec JOIN
+  { $$ = JoinCondition{} }
+| ON expression
+  { $$ = JoinCondition{On: $2} }
 
 as_opt:
   { $$ = struct{}{} }
@@ -665,7 +1698,9 @@ inner_join:
   {
     $$ = JoinStr
   }
-| STRAIGHT_JOIN
+
+straight_join:
+  STRAIGHT_JOIN
   {
     $$ = StraightJoinStr
   }
@@ -715,38 +1750,28 @@ into_table_name:
 table_name:
   table_id
   {
-    $$ = &TableName{Name: $1}
+    $$ = TableName{Name: $1}
   }
 | table_id '.' reserved_table_id
   {
-    $$ = &TableName{Qualifier: $1, Name: $3}
+    $$ = TableName{Qualifier: $1, Name: $3}
   }
 
 index_hint_list:
   {
     $$ = nil
   }
-| USE INDEX openb index_list closeb
+| USE INDEX openb column_list closeb
   {
     $$ = &IndexHints{Type: UseStr, Indexes: $4}
   }
-| IGNORE INDEX openb index_list closeb
+| IGNORE INDEX openb column_list closeb
   {
     $$ = &IndexHints{Type: IgnoreStr, Indexes: $4}
   }
-| FORCE INDEX openb index_list closeb
+| FORCE INDEX openb column_list closeb
   {
     $$ = &IndexHints{Type: ForceStr, Indexes: $4}
-  }
-
-index_list:
-  sql_id
-  {
-    $$ = []ColIdent{$1}
-  }
-| index_list ',' sql_id
-  {
-    $$ = append($1, $3)
   }
 
 where_expression_opt:
@@ -783,6 +1808,20 @@ expression:
   {
     $$ = $1
   }
+| DEFAULT default_opt
+  {
+    $$ = &Default{ColName: $2}
+  }
+
+default_opt:
+  /* empty */
+  {
+    $$ = ""
+  }
+| openb ID closeb
+  {
+    $$ = string($2)
+  }
 
 boolean_value:
   TRUE
@@ -795,15 +1834,7 @@ boolean_value:
   }
 
 condition:
-  boolean_value
-  {
-    $$ = $1
-  }
-| value_expression compare boolean_value
-  {
-    $$ = &ComparisonExpr{Left: $1, Operator: $2, Right: $3}
-  }
-| value_expression compare value_expression
+  value_expression compare value_expression
   {
     $$ = &ComparisonExpr{Left: $1, Operator: $2, Right: $3}
   }
@@ -939,26 +1970,12 @@ expression_list:
     $$ = append($1, $3)
   }
 
-charset:
-  ID
-  {
-    $$ = string($1)
-  }
-| STRING
-  {
-    $$ = string($1)
-  }
-| BINARY
-  {
-    $$ = string($1)
-  }
-| DATE
-  {
-    $$ = string($1)
-  }
-
 value_expression:
   value
+  {
+    $$ = $1
+  }
+| boolean_value
   {
     $$ = $1
   }
@@ -1038,6 +2055,10 @@ value_expression:
   {
     $$ = &UnaryExpr{Operator: BinaryStr, Expr: $2}
   }
+| UNDERSCORE_BINARY value_expression %prec UNARY
+  {
+    $$ = &UnaryExpr{Operator: UBinaryStr, Expr: $2}
+  }
 | '+'  value_expression %prec UNARY
   {
     if num, ok := $2.(*SQLVal); ok && num.Type == IntVal {
@@ -1074,7 +2095,7 @@ value_expression:
     // as a function. If support is needed for that,
     // we'll need to revisit this. The solution
     // will be non-trivial because of grammar conflicts.
-    $$ = &IntervalExpr{Expr: $2, Unit: $3}
+    $$ = &IntervalExpr{Expr: $2, Unit: $3.String()}
   }
 | function_call_generic
 | function_call_keyword
@@ -1116,13 +2137,37 @@ function_call_keyword:
   {
     $$ = &ConvertExpr{Expr: $3, Type: $5}
   }
-| CONVERT openb expression USING convert_type closeb
-  {
-    $$ = &ConvertExpr{Expr: $3, Type: $5}
-  }
 | CAST openb expression AS convert_type closeb
   {
     $$ = &ConvertExpr{Expr: $3, Type: $5}
+  }
+| CONVERT openb expression USING charset closeb
+  {
+    $$ = &ConvertUsingExpr{Expr: $3, Type: $5}
+  }
+| SUBSTR openb column_name ',' value_expression closeb
+  {
+    $$ = &SubstrExpr{Name: $3, From: $5, To: nil}
+  }
+| SUBSTR openb column_name ',' value_expression ',' value_expression closeb
+  {
+    $$ = &SubstrExpr{Name: $3, From: $5, To: $7}
+  }
+| SUBSTR openb column_name FROM value_expression FOR value_expression closeb
+  {
+    $$ = &SubstrExpr{Name: $3, From: $5, To: $7}
+  }
+| SUBSTRING openb column_name ',' value_expression closeb
+  {
+    $$ = &SubstrExpr{Name: $3, From: $5, To: nil}
+  }
+| SUBSTRING openb column_name ',' value_expression ',' value_expression closeb
+  {
+    $$ = &SubstrExpr{Name: $3, From: $5, To: $7}
+  }
+| SUBSTRING openb column_name FROM value_expression FOR value_expression closeb
+  {
+    $$ = &SubstrExpr{Name: $3, From: $5, To: $7}
   }
 | MATCH openb select_expression_list closeb AGAINST openb value_expression match_option closeb
   {
@@ -1136,7 +2181,7 @@ function_call_keyword:
   {
     $$ = &CaseExpr{Expr: $2, Whens: $3, Else: $4}
   }
-| VALUES openb sql_id closeb
+| VALUES openb column_name closeb
   {
     $$ = &ValuesFuncExpr{Name: $3}
   }
@@ -1231,39 +2276,70 @@ match_option:
     $$ = QueryExpansionStr
  }
 
+charset:
+  ID
+{
+    $$ = string($1)
+}
+| STRING
+{
+    $$ = string($1)
+}
 
 convert_type:
-  charset
+  BINARY length_opt
   {
-    $$ = &ConvertType{Type: $1}
+    $$ = &ConvertType{Type: string($1), Length: $2}
   }
-|  charset INTEGER
+| CHAR length_opt charset_opt
   {
-    $$ = &ConvertType{Type: $1}
+    $$ = &ConvertType{Type: string($1), Length: $2, Charset: $3, Operator: CharacterSetStr}
   }
-| charset openb INTEGRAL closeb
+| CHAR length_opt ID
   {
-    $$ = &ConvertType{Type: $1, Length: NewIntVal($3)}
+    $$ = &ConvertType{Type: string($1), Length: $2, Charset: string($3)}
   }
-| charset openb INTEGRAL closeb charset
+| DATE
   {
-    $$ = &ConvertType{Type: $1, Length: NewIntVal($3), Charset: $5}
+    $$ = &ConvertType{Type: string($1)}
   }
-| charset openb INTEGRAL closeb CHARACTER SET charset
+| DATETIME length_opt
   {
-    $$ = &ConvertType{Type: $1, Length: NewIntVal($3), Charset: $7, Operator: CharacterSetStr}
+    $$ = &ConvertType{Type: string($1), Length: $2}
   }
-| charset charset
+| DECIMAL decimal_length_opt
   {
-    $$ = &ConvertType{Type: $1, Charset: $2}
+    $$ = &ConvertType{Type: string($1)}
+    $$.Length = $2.Length
+    $$.Scale = $2.Scale
   }
-| charset CHARACTER SET charset
+| JSON
   {
-    $$ = &ConvertType{Type: $1, Charset: $4, Operator: CharacterSetStr}
+    $$ = &ConvertType{Type: string($1)}
   }
-| charset openb INTEGRAL ',' INTEGRAL closeb
+| NCHAR length_opt
   {
-    $$ = &ConvertType{Type: $1, Length: NewIntVal($3), Scale: NewIntVal($5)}
+    $$ = &ConvertType{Type: string($1), Length: $2}
+  }
+| SIGNED
+  {
+    $$ = &ConvertType{Type: string($1)}
+  }
+| SIGNED INTEGER
+  {
+    $$ = &ConvertType{Type: string($1)}
+  }
+| TIME length_opt
+  {
+    $$ = &ConvertType{Type: string($1), Length: $2}
+  }
+| UNSIGNED
+  {
+    $$ = &ConvertType{Type: string($1)}
+  }
+| UNSIGNED INTEGER
+  {
+    $$ = &ConvertType{Type: string($1)}
   }
 
 expression_opt:
@@ -1316,11 +2392,11 @@ column_name:
   }
 | table_id '.' reserved_sql_id
   {
-    $$ = &ColName{Qualifier: &TableName{Name: $1}, Name: $3}
+    $$ = &ColName{Qualifier: TableName{Name: $1}, Name: $3}
   }
 | table_id '.' reserved_table_id '.' reserved_sql_id
   {
-    $$ = &ColName{Qualifier: &TableName{Qualifier: $1, Name: $3}, Name: $5}
+    $$ = &ColName{Qualifier: TableName{Qualifier: $1, Name: $3}, Name: $5}
   }
 
 value:
@@ -1331,6 +2407,10 @@ value:
 | HEX
   {
     $$ = NewHexVal($1)
+  }
+| BIT_LITERAL
+  {
+    $$ = NewBitVal($1)
   }
 | INTEGRAL
   {
@@ -1572,6 +2652,48 @@ update_expression:
     $$ = &UpdateExpr{Name: $1, Expr: $3}
   }
 
+set_list:
+  set_expression
+  {
+    $$ = SetExprs{$1}
+  }
+| set_list ',' set_expression
+  {
+    $$ = append($1, $3)
+  }
+
+set_expression:
+  reserved_sql_id '=' expression
+  {
+    $$ = &SetExpr{Name: $1, Expr: $3}
+  }
+| charset_or_character_set charset_value collate_opt
+  {
+    $$ = &SetExpr{Name: NewColIdent(string($1)), Expr: $2}
+  }
+
+charset_or_character_set:
+  CHARSET
+| CHARACTER SET
+  {
+    $$ = []byte("charset")
+  }
+| NAMES
+
+charset_value:
+  sql_id
+  {
+    $$ = NewStrVal([]byte($1.String()))
+  }
+| STRING
+  {
+    $$ = NewStrVal($1)
+  }
+| DEFAULT
+  {
+    $$ = &Default{}
+  }
+
 for_from:
   FOR
 | FROM
@@ -1591,16 +2713,22 @@ ignore_opt:
 | IGNORE
   { $$ = IgnoreStr }
 
-non_rename_operation:
+non_add_drop_or_rename_operation:
   ALTER
   { $$ = struct{}{} }
-| DEFAULT
+| AUTO_INCREMENT
   { $$ = struct{}{} }
-| DROP
+| CHARACTER
+  { $$ = struct{}{} }
+| COMMENT_KEYWORD
+  { $$ = struct{}{} }
+| DEFAULT
   { $$ = struct{}{} }
 | ORDER
   { $$ = struct{}{} }
 | CONVERT
+  { $$ = struct{}{} }
+| PARTITION
   { $$ = struct{}{} }
 | UNUSED
   { $$ = struct{}{} }
@@ -1628,9 +2756,9 @@ constraint_opt:
   { $$ = struct{}{} }
 
 using_opt:
-  { $$ = struct{}{} }
+  { $$ = ColIdent{} }
 | USING sql_id
-  { $$ = struct{}{} }
+  { $$ = $2 }
 
 sql_id:
   ID
@@ -1668,6 +2796,7 @@ reserved_table_id:
 
 /*
   These are not all necessarily reserved in MySQL, but some are.
+
   These are more importantly reserved because they may conflict with our grammar.
   If you want to move one that is not reserved in MySQL (i.e. ESCAPE) to the
   non_reserved_keywords, you'll need to deal with any conflicts.
@@ -1675,9 +2804,11 @@ reserved_table_id:
   Sorted alphabetically
 */
 reserved_keyword:
-  AND
+  ADD
+| AND
 | AS
 | ASC
+| AUTO_INCREMENT
 | BETWEEN
 | BINARY
 | BY
@@ -1689,6 +2820,8 @@ reserved_keyword:
 | CURRENT_DATE
 | CURRENT_TIME
 | CURRENT_TIMESTAMP
+| SUBSTR
+| SUBSTRING
 | DATABASE
 | DATABASES
 | DEFAULT
@@ -1727,6 +2860,7 @@ reserved_keyword:
 | LOCALTIMESTAMP
 | LOCK
 | MATCH
+| MAXVALUE
 | MOD
 | NATURAL
 | NEXT // next should be doable as non-reserved, but is not due to the special `select next num_val` query that vitess supports
@@ -1740,12 +2874,10 @@ reserved_keyword:
 | RENAME
 | REPLACE
 | RIGHT
+| SCHEMA
 | SELECT
 | SEPARATOR
 | SET
-| VITESS_KEYSPACES
-| VITESS_SHARDS
-| VSCHEMA_TABLES
 | SHOW
 | STRAIGHT_JOIN
 | TABLE
@@ -1774,21 +2906,94 @@ reserved_keyword:
 */
 non_reserved_keyword:
   AGAINST
+| BEGIN
+| BIGINT
+| BIT
+| BLOB
+| BOOL
+| CHAR
+| CHARACTER
+| CHARSET
+| COMMENT_KEYWORD
+| COMMIT
 | DATE
+| DATETIME
+| DECIMAL
+| DOUBLE
 | DUPLICATE
+| ENUM
 | EXPANSION
+| FLOAT_TYPE
+| FOREIGN
+| FULLTEXT
+| GEOMETRY
+| GEOMETRYCOLLECTION
+| GLOBAL
+| INT
 | INTEGER
+| JSON
+| KEY_BLOCK_SIZE
+| KEYS
 | LANGUAGE
+| LAST_INSERT_ID
+| LESS
+| LINESTRING
+| LONGBLOB
+| LONGTEXT
+| MEDIUMBLOB
+| MEDIUMINT
+| MEDIUMTEXT
 | MODE
+| MULTILINESTRING
+| MULTIPOINT
+| MULTIPOLYGON
+| NAMES
+| NCHAR
+| NUMERIC
 | OFFSET
 | OPTIMIZE
+| PARTITION
+| POINT
+| POLYGON
+| PRIMARY
+| PROCEDURE
 | QUERY
+| REAL
+| REORGANIZE
 | REPAIR
+| ROLLBACK
+| SESSION
 | SHARE
+| SIGNED
+| SMALLINT
+| SPATIAL
+| START
+| STATUS
+| TEXT
+| THAN
+| TIME
+| TIMESTAMP
+| TINYBLOB
+| TINYINT
+| TINYTEXT
+| TRANSACTION
+| TRIGGER
 | TRUNCATE
+| UNSIGNED
 | UNUSED
+| VARBINARY
+| VARCHAR
+| VARIABLES
 | VIEW
+| VINDEX
+| VINDEXES
+| VITESS_KEYSPACES
+| VITESS_SHARDS
+| VITESS_TABLETS
+| VSCHEMA_TABLES
 | WITH
+| YEAR
+| ZEROFILL
 
 openb:
   '('

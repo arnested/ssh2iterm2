@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+
+# Copyright 2017 Google Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Initialize the test environment."""
 
 import logging
@@ -11,9 +26,7 @@ import protocols_flavor
 # Import the topo implementations that you want registered as options for the
 # --topo-server-flavor flag.
 # pylint: disable=unused-import
-import topo_flavor.zookeeper
 import topo_flavor.zk2
-import topo_flavor.etcd
 import topo_flavor.etcd2
 import topo_flavor.consul
 
@@ -28,6 +41,7 @@ from topo_flavor.server import topo_server
 import vtgate_gateway_flavor.discoverygateway
 
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 
 from vttest import mysql_flavor
 
@@ -81,6 +95,10 @@ run_local_database = os.path.join(vtroot, 'py-vtdb', 'vttest',
 
 # url to hit to force the logs to flush.
 flush_logs_url = '/debug/flushlogs'
+
+# set the maximum size for grpc messages to be 5MB (larger than the default of
+# 4MB).
+grpc_max_message_size = 5 * 1024 * 1024
 
 
 def setup():
@@ -230,9 +248,44 @@ def create_webdriver():
         desired_capabilities=capabilities,
         command_executor='http://%s/wd/hub' % hub_url)
   else:
-    os.environ['webdriver.chrome.driver'] = os.path.join(vtroot, 'dist')
     # Only testing against Chrome for now
-    driver = webdriver.Chrome()
+    os.environ['webdriver.chrome.driver'] = os.path.join(vtroot, 'dist')
+    service_log_path = os.path.join(tmproot, 'chromedriver.log')
+    try:
+      driver = webdriver.Chrome(service_args=['--verbose'],
+                                service_log_path=service_log_path)
+    except WebDriverException as e:
+      if 'Chrome failed to start' not in str(e):
+        # Not a Chrome issue. Just re-raise the exception.
+        raise
+
+      # Chrome issue: Dump the log file.
+      logging.error(
+          'webdriver failed to start Chrome.\n'
+          '\n'
+          'See chromedriver.log below for details.\n'
+          '\n'
+          'Original exception:\n'
+          '\n'
+          '%s', str(e))
+      # Dump the whole log file. This can go over multiple pages because
+      # webdriver is constantly polling (after Chrome crashed) and logging
+      # each attempt.
+      with open(service_log_path, 'r') as f:
+        logging.error('Content of chromedriver.log:\n%s', f.read())
+      logging.error('webdriver failed to start Chrome. Scroll up for'
+                    ' details.')
+      exit(1)
+
     driver.set_window_position(0, 0)
     driver.set_window_size(1280, 1024)
   return driver
+
+
+def set_log_level(verbose):
+  level = logging.DEBUG
+  if verbose == 0:
+    level = logging.WARNING
+  elif verbose == 1:
+    level = logging.INFO
+  logging.getLogger().setLevel(level)

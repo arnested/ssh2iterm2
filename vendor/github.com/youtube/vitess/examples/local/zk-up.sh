@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Copyright 2017 Google Inc.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # This is an example script that creates a quorum of ZooKeeper servers.
 
 set -e
@@ -36,15 +50,14 @@ done
 
 echo "Started zk servers."
 
-# Now create the toplevel directories we'll need, if not there.
-$VTROOT/bin/zk -server $ZK_SERVER touch -p /vitess/global
-$VTROOT/bin/zk -server $ZK_SERVER touch -p /vitess/test
-
-# And also add the CellInfo description for the 'test' cell.
+# Add the CellInfo description for the 'test' cell.
 # If the node already exists, it's fine, means we used existing data.
+set +e
+# shellcheck disable=SC2086
 $VTROOT/bin/vtctl $TOPOLOGY_FLAGS AddCellInfo \
   -root /vitess/test \
   -server_address $ZK_SERVER \
-  test || /bin/true
+  test
+set -e
 
 echo "Configured zk servers."

@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package pools
 
@@ -9,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youtube/vitess/go/sync2"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/sync2"
 )
 
 var lastID, count sync2.AtomicInt64
@@ -37,7 +49,7 @@ func FailFactory() (Resource, error) {
 }
 
 func SlowFailFactory() (Resource, error) {
-	time.Sleep(10 * time.Nanosecond)
+	time.Sleep(10 * time.Millisecond)
 	return nil, errors.New("Failed")
 }
 
@@ -56,15 +68,14 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Errorf("Unexpected error %v", err)
 		}
-		_, available, _, waitCount, waitTime, _ := p.Stats()
-		if available != int64(5-i-1) {
-			t.Errorf("expecting %d, received %d", 5-i-1, available)
+		if p.Available() != int64(5-i-1) {
+			t.Errorf("expecting %d, received %d", 5-i-1, p.Available())
 		}
-		if waitCount != 0 {
-			t.Errorf("expecting 0, received %d", waitCount)
+		if p.WaitCount() != 0 {
+			t.Errorf("expecting 0, received %d", p.WaitCount())
 		}
-		if waitTime != 0 {
-			t.Errorf("expecting 0, received %d", waitTime)
+		if p.WaitTime() != 0 {
+			t.Errorf("expecting 0, received %d", p.WaitTime())
 		}
 		if lastID.Get() != int64(i+1) {
 			t.Errorf("Expecting %d, received %d", i+1, lastID.Get())
@@ -95,11 +106,10 @@ func TestOpen(t *testing.T) {
 		p.Put(resources[i])
 	}
 	<-ch
-	_, _, _, waitCount, waitTime, _ := p.Stats()
-	if waitCount != 5 {
-		t.Errorf("Expecting 5, received %d", waitCount)
+	if p.WaitCount() != 5 {
+		t.Errorf("Expecting 5, received %d", p.WaitCount())
 	}
-	if waitTime == 0 {
+	if p.WaitTime() == 0 {
 		t.Errorf("Expecting non-zero")
 	}
 	if lastID.Get() != 5 {
@@ -141,20 +151,18 @@ func TestOpen(t *testing.T) {
 	if lastID.Get() != 6 {
 		t.Errorf("Expecting 6, received %d", lastID.Get())
 	}
-	capacity, available, _, _, _, _ := p.Stats()
-	if capacity != 3 {
-		t.Errorf("Expecting 3, received %d", capacity)
+	if p.Capacity() != 3 {
+		t.Errorf("Expecting 3, received %d", p.Capacity())
 	}
-	if available != 3 {
-		t.Errorf("Expecting 3, received %d", available)
+	if p.Available() != 3 {
+		t.Errorf("Expecting 3, received %d", p.Available())
 	}
 	p.SetCapacity(6)
-	capacity, available, _, _, _, _ = p.Stats()
-	if capacity != 6 {
-		t.Errorf("Expecting 6, received %d", capacity)
+	if p.Capacity() != 6 {
+		t.Errorf("Expecting 6, received %d", p.Capacity())
 	}
-	if available != 6 {
-		t.Errorf("Expecting 6, received %d", available)
+	if p.Available() != 6 {
+		t.Errorf("Expecting 6, received %d", p.Available())
 	}
 	for i := 0; i < 6; i++ {
 		r, err := p.Get(ctx)
@@ -175,12 +183,11 @@ func TestOpen(t *testing.T) {
 
 	// Close
 	p.Close()
-	capacity, available, _, _, _, _ = p.Stats()
-	if capacity != 0 {
-		t.Errorf("Expecting 0, received %d", capacity)
+	if p.Capacity() != 0 {
+		t.Errorf("Expecting 0, received %d", p.Capacity())
 	}
-	if available != 0 {
-		t.Errorf("Expecting 0, received %d", available)
+	if p.Available() != 0 {
+		t.Errorf("Expecting 0, received %d", p.Available())
 	}
 	if count.Get() != 0 {
 		t.Errorf("Expecting 0, received %d", count.Get())
@@ -206,7 +213,7 @@ func TestShrinking(t *testing.T) {
 		p.SetCapacity(3)
 		done <- true
 	}()
-	expected := `{"Capacity": 3, "Available": 0, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000}`
+	expected := `{"Capacity": 3, "Available": 0, "Active": 4, "InUse": 4, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000, "IdleClosed": 0}`
 	for i := 0; i < 10; i++ {
 		time.Sleep(10 * time.Millisecond)
 		stats := p.StatsJSON()
@@ -225,7 +232,7 @@ func TestShrinking(t *testing.T) {
 		p.Put(resources[i])
 	}
 	stats := p.StatsJSON()
-	expected = `{"Capacity": 3, "Available": 3, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000}`
+	expected = `{"Capacity": 3, "Available": 3, "Active": 3, "InUse": 0, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000, "IdleClosed": 0}`
 	if stats != expected {
 		t.Errorf(`expecting '%s', received '%s'`, expected, stats)
 	}
@@ -265,15 +272,14 @@ func TestShrinking(t *testing.T) {
 	}
 	<-done
 	<-done
-	capacity, available, _, waitcount, _, _ := p.Stats()
-	if capacity != 2 {
-		t.Errorf("Expecting 2, received %d", capacity)
+	if p.Capacity() != 2 {
+		t.Errorf("Expecting 2, received %d", p.Capacity())
 	}
-	if available != 2 {
-		t.Errorf("Expecting 2, received %d", available)
+	if p.Available() != 2 {
+		t.Errorf("Expecting 2, received %d", p.Available())
 	}
-	if waitcount != 1 {
-		t.Errorf("Expecting 1, received %d", waitcount)
+	if p.WaitCount() != 1 {
+		t.Errorf("Expecting 1, received %d", p.WaitCount())
 	}
 	if count.Get() != 2 {
 		t.Errorf("Expecting 2, received %d", count.Get())
@@ -296,13 +302,13 @@ func TestShrinking(t *testing.T) {
 		p.Put(r)
 		done <- true
 	}()
-	time.Sleep(10 * time.Nanosecond)
+	time.Sleep(10 * time.Millisecond)
 
 	// This will wait till we Put
 	go p.SetCapacity(2)
-	time.Sleep(10 * time.Nanosecond)
+	time.Sleep(10 * time.Millisecond)
 	go p.SetCapacity(4)
-	time.Sleep(10 * time.Nanosecond)
+	time.Sleep(10 * time.Millisecond)
 
 	// This should not hang
 	for i := 0; i < 3; i++ {
@@ -319,12 +325,11 @@ func TestShrinking(t *testing.T) {
 		t.Errorf("Expecting error")
 	}
 
-	capacity, available, _, _, _, _ = p.Stats()
-	if capacity != 4 {
-		t.Errorf("Expecting 4, received %d", capacity)
+	if p.Capacity() != 4 {
+		t.Errorf("Expecting 4, received %d", p.Capacity())
 	}
-	if available != 4 {
-		t.Errorf("Expecting 4, received %d", available)
+	if p.Available() != 4 {
+		t.Errorf("Expecting 4, received %d", p.Available())
 	}
 }
 
@@ -348,9 +353,9 @@ func TestClosing(t *testing.T) {
 	}()
 
 	// Wait for goroutine to call Close
-	time.Sleep(10 * time.Nanosecond)
+	time.Sleep(10 * time.Millisecond)
 	stats := p.StatsJSON()
-	expected := `{"Capacity": 0, "Available": 0, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000}`
+	expected := `{"Capacity": 0, "Available": 0, "Active": 5, "InUse": 5, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000, "IdleClosed": 0}`
 	if stats != expected {
 		t.Errorf(`expecting '%s', received '%s'`, expected, stats)
 	}
@@ -370,7 +375,7 @@ func TestClosing(t *testing.T) {
 	}
 
 	stats = p.StatsJSON()
-	expected = `{"Capacity": 0, "Available": 0, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000}`
+	expected = `{"Capacity": 0, "Available": 0, "Active": 0, "InUse": 0, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000, "IdleClosed": 0}`
 	if stats != expected {
 		t.Errorf(`expecting '%s', received '%s'`, expected, stats)
 	}
@@ -386,12 +391,18 @@ func TestIdleTimeout(t *testing.T) {
 	ctx := context.Background()
 	lastID.Set(0)
 	count.Set(0)
-	p := NewResourcePool(PoolFactory, 1, 1, 10*time.Nanosecond)
+	p := NewResourcePool(PoolFactory, 1, 1, 10*time.Millisecond)
 	defer p.Close()
 
 	r, err := p.Get(ctx)
 	if err != nil {
 		t.Errorf("Unexpected error %v", err)
+	}
+	if count.Get() != 1 {
+		t.Errorf("Expecting 1, received %d", count.Get())
+	}
+	if p.IdleClosed() != 0 {
+		t.Errorf("Expecting 0, received %d", p.IdleClosed())
 	}
 	p.Put(r)
 	if lastID.Get() != 1 {
@@ -400,7 +411,17 @@ func TestIdleTimeout(t *testing.T) {
 	if count.Get() != 1 {
 		t.Errorf("Expecting 1, received %d", count.Get())
 	}
-	time.Sleep(20 * time.Nanosecond)
+	if p.IdleClosed() != 0 {
+		t.Errorf("Expecting 0, received %d", p.IdleClosed())
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	if count.Get() != 0 {
+		t.Errorf("Expecting 0, received %d", count.Get())
+	}
+	if p.IdleClosed() != 1 {
+		t.Errorf("Expecting 1, received %d", p.IdleClosed())
+	}
 	r, err = p.Get(ctx)
 	if err != nil {
 		t.Errorf("Unexpected error %v", err)
@@ -411,7 +432,64 @@ func TestIdleTimeout(t *testing.T) {
 	if count.Get() != 1 {
 		t.Errorf("Expecting 1, received %d", count.Get())
 	}
+	if p.IdleClosed() != 1 {
+		t.Errorf("Expecting 1, received %d", p.IdleClosed())
+	}
+
+	// sleep to let the idle closer run while all resources are in use
+	// then make sure things are still as we expect
+	time.Sleep(20 * time.Millisecond)
+	if lastID.Get() != 2 {
+		t.Errorf("Expecting 2, received %d", count.Get())
+	}
+	if count.Get() != 1 {
+		t.Errorf("Expecting 1, received %d", count.Get())
+	}
+	if p.IdleClosed() != 1 {
+		t.Errorf("Expecting 1, received %d", p.IdleClosed())
+	}
 	p.Put(r)
+	r, err = p.Get(ctx)
+	if err != nil {
+		t.Errorf("Unexpected error %v", err)
+	}
+	if lastID.Get() != 2 {
+		t.Errorf("Expecting 2, received %d", count.Get())
+	}
+	if count.Get() != 1 {
+		t.Errorf("Expecting 1, received %d", count.Get())
+	}
+	if p.IdleClosed() != 1 {
+		t.Errorf("Expecting 1, received %d", p.IdleClosed())
+	}
+
+	// the idle close thread wakes up every 1/100 of the idle time, so ensure
+	// the timeout change applies to newly added resources
+	p.SetIdleTimeout(1000 * time.Millisecond)
+	p.Put(r)
+
+	time.Sleep(20 * time.Millisecond)
+	if lastID.Get() != 2 {
+		t.Errorf("Expecting 2, received %d", count.Get())
+	}
+	if count.Get() != 1 {
+		t.Errorf("Expecting 1, received %d", count.Get())
+	}
+	if p.IdleClosed() != 1 {
+		t.Errorf("Expecting 1, received %d", p.IdleClosed())
+	}
+
+	p.SetIdleTimeout(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	if lastID.Get() != 2 {
+		t.Errorf("Expecting 2, received %d", count.Get())
+	}
+	if count.Get() != 0 {
+		t.Errorf("Expecting 1, received %d", count.Get())
+	}
+	if p.IdleClosed() != 2 {
+		t.Errorf("Expecting 2, received %d", p.IdleClosed())
+	}
 }
 
 func TestCreateFail(t *testing.T) {
@@ -424,7 +502,7 @@ func TestCreateFail(t *testing.T) {
 		t.Errorf("Expecting Failed, received %v", err)
 	}
 	stats := p.StatsJSON()
-	expected := `{"Capacity": 5, "Available": 5, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000}`
+	expected := `{"Capacity": 5, "Available": 5, "Active": 0, "InUse": 0, "MaxCapacity": 5, "WaitCount": 0, "WaitTime": 0, "IdleTimeout": 1000000000, "IdleClosed": 0}`
 	if stats != expected {
 		t.Errorf(`expecting '%s', received '%s'`, expected, stats)
 	}
@@ -447,9 +525,8 @@ func TestSlowCreateFail(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		<-ch
 	}
-	_, available, _, _, _, _ := p.Stats()
-	if available != 2 {
-		t.Errorf("Expecting 2, received %d", available)
+	if p.Available() != 2 {
+		t.Errorf("Expecting 2, received %d", p.Available())
 	}
 }
 

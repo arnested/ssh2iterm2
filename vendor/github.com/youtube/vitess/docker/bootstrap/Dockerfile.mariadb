@@ -1,16 +1,15 @@
 FROM vitess/bootstrap:common
 
-# Install MariaDB 10.0.x
-RUN apt-key adv --recv-keys --keyserver keyserver.ubuntu.com 0xcbcb082a1bb943db && \
-    add-apt-repository 'deb http://sfo1.mirrors.digitalocean.com/mariadb/repo/10.0/debian jessie main' && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server libmariadbclient-dev && \
-    rm -rf /var/lib/apt/lists/*
+# Install MariaDB 10.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    mariadb-server \
+    libmariadbclient-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Bootstrap Vitess
-WORKDIR /vt/src/github.com/youtube/vitess
+WORKDIR /vt/src/vitess.io/vitess
 USER vitess
 # Required by e2e test dependencies e.g. test/environment.py.
 ENV USER vitess
 ENV MYSQL_FLAVOR MariaDB
-RUN ./bootstrap.sh --skip_root_installs
+RUN ./bootstrap.sh

@@ -1,6 +1,16 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
-# Use of this source code is governed by a BSD-style license that can
-# be found in the LICENSE file.
+# Copyright 2017 Google Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """A simple, direct connection to the vtgate proxy server, using gRPC.
 """
@@ -14,7 +24,7 @@ from vtdb import prefer_vtroot_imports  # pylint: disable=unused-import
 import grpc
 
 from vtproto import vtgate_pb2
-from vtproto import vtgateservice_pb2
+from vtproto import vtgateservice_pb2_grpc
 
 from vtdb import dbexceptions
 from vtdb import proto3_encoding
@@ -22,6 +32,8 @@ from vtdb import vtdb_logger
 from vtdb import vtgate_client
 from vtdb import vtgate_cursor
 from vtdb import vtgate_utils
+from util import static_auth_client
+from util import grpc_with_metadata
 
 
 _errno_pattern = re.compile(r'\(errno (\d+)\)', re.IGNORECASE)
@@ -34,6 +46,7 @@ class GRPCVTGateConnection(vtgate_client.VTGateClient,
 
   def __init__(self, addr, timeout,
                root_certificates=None, private_key=None, certificate_chain=None,
+               auth_static_client_creds=None,
                **kwargs):
     """Creates a new GRPCVTGateConnection.
 
@@ -43,6 +56,7 @@ class GRPCVTGateConnection(vtgate_client.VTGateClient,
       root_certificates: PEM_encoded root certificates.
       private_key: PEM-encoded private key.
       certificate_chain: PEM-encoded certificate chain.
+      auth_static_client_creds: basic auth credentials file path.
       **kwargs: passed up.
     """
     super(GRPCVTGateConnection, self).__init__(addr, timeout, **kwargs)
@@ -50,6 +64,7 @@ class GRPCVTGateConnection(vtgate_client.VTGateClient,
     self.root_certificates = root_certificates
     self.private_key = private_key
     self.certificate_chain = certificate_chain
+    self.auth_static_client_creds = auth_static_client_creds
     self.logger_object = vtdb_logger.get_logger()
 
   def dial(self):
@@ -65,7 +80,11 @@ class GRPCVTGateConnection(vtgate_client.VTGateClient,
       channel = grpc.secure_channel(target, creds)
     else:
       channel = grpc.insecure_channel(target)
-    self.stub = vtgateservice_pb2.VitessStub(channel)
+    if self.auth_static_client_creds is not None:
+      channel = grpc_with_metadata.GRPCWithMetadataChannel(
+          channel,
+          self.get_auth_static_client_creds)
+    self.stub = vtgateservice_pb2_grpc.VitessStub(channel)
 
   def close(self):
     """close closes the server connection and frees up associated resources.
@@ -85,6 +104,10 @@ class GRPCVTGateConnection(vtgate_client.VTGateClient,
 
   def is_closed(self):
     return self.stub is None
+
+  def get_auth_static_client_creds(self):
+    return static_auth_client.StaticAuthClientCreds(
+        self.auth_static_client_creds).metadata()
 
   def cursor(self, *pargs, **kwargs):
     cursorclass = kwargs.pop('cursorclass', None) or vtgate_cursor.VTGateCursor
@@ -362,6 +385,5 @@ def _prune_integrity_error(msg, exc_args):
   pruned_msg = msg[:msg.find(parts[2])]
   exc_args = (pruned_msg,) + tuple(exc_args[1:])
   return dbexceptions.IntegrityError(exc_args)
-
 
 vtgate_client.register_conn_class('grpc', GRPCVTGateConnection)

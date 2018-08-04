@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package throttlerclient defines the generic RPC client interface for the
 // throttler service. It has to be implemented for the different RPC frameworks
@@ -12,9 +24,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/youtube/vitess/go/vt/proto/throttlerdata"
-
 	"golang.org/x/net/context"
+
+	throttlerdatapb "vitess.io/vitess/go/vt/proto/throttlerdata"
 )
 
 // protocol specifices which RPC client implementation should be used.
@@ -32,7 +44,7 @@ type Client interface {
 
 	// GetConfiguration returns the configuration of the MaxReplicationlag module
 	// for the given throttler or all throttlers if "throttlerName" is empty.
-	GetConfiguration(ctx context.Context, throttlerName string) (map[string]*throttlerdata.Configuration, error)
+	GetConfiguration(ctx context.Context, throttlerName string) (map[string]*throttlerdatapb.Configuration, error)
 
 	// UpdateConfiguration (partially) updates the configuration of the
 	// MaxReplicationlag module for the given throttler or all throttlers if
@@ -40,7 +52,7 @@ type Client interface {
 	// If "copyZeroValues" is true, fields with zero values will be copied
 	// as well.
 	// The function returns the names of the updated throttlers.
-	UpdateConfiguration(ctx context.Context, throttlerName string, configuration *throttlerdata.Configuration, copyZeroValues bool) ([]string, error)
+	UpdateConfiguration(ctx context.Context, throttlerName string, configuration *throttlerdatapb.Configuration, copyZeroValues bool) ([]string, error)
 
 	// ResetConfiguration resets the configuration of the MaxReplicationlag module
 	// to the initial configuration for the given throttler or all throttlers if

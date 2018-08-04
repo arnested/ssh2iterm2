@@ -1,23 +1,45 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package txthrottler
+
+// Commands to generate the mocks for this test.
+//go:generate mockgen -destination mock_healthcheck_test.go -package txthrottler vitess.io/vitess/go/vt/discovery HealthCheck
+//go:generate mockgen -destination mock_throttler_test.go -package txthrottler vitess.io/vitess/go/vt/vttablet/tabletserver/txthrottler ThrottlerInterface
+//go:generate mockgen -destination mock_topology_watcher_test.go -package txthrottler vitess.io/vitess/go/vt/vttablet/tabletserver/txthrottler TopologyWatcherInterface
 
 import (
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"github.com/youtube/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func TestDisabledThrottler(t *testing.T) {
 	oldConfig := tabletenv.Config
 	defer func() { tabletenv.Config = oldConfig }()
 	tabletenv.Config.EnableTxThrottler = false
-	throttler := CreateTxThrottlerFromTabletConfig(topo.Server{})
+	throttler := CreateTxThrottlerFromTabletConfig(nil)
 	if err := throttler.Open("keyspace", "shard"); err != nil {
 		t.Fatalf("want: nil, got: %v", err)
 	}
@@ -32,7 +54,7 @@ func TestEnabledThrottler(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	defer resetTxThrottlerFactories()
-	mockTopoServer, _ := NewMockServer(mockCtrl)
+	ts := memorytopo.NewServer("cell1", "cell2")
 
 	mockHealthCheck := NewMockHealthCheck(mockCtrl)
 	var hcListener discovery.HealthCheckStatsListener
@@ -45,9 +67,9 @@ func TestEnabledThrottler(t *testing.T) {
 	hcCall2.After(hcCall1)
 	healthCheckFactory = func() discovery.HealthCheck { return mockHealthCheck }
 
-	topologyWatcherFactory = func(topoServer topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface {
-		if mockTopoServer.Impl != topoServer.Impl {
-			t.Errorf("want: %v, got: %v", mockTopoServer, topoServer)
+	topologyWatcherFactory = func(topoServer *topo.Server, tr discovery.TabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface {
+		if ts != topoServer {
+			t.Errorf("want: %v, got: %v", ts, topoServer)
 		}
 		if cell != "cell1" && cell != "cell2" {
 			t.Errorf("want: cell1 or cell2, got: %v", cell)
@@ -93,7 +115,7 @@ func TestEnabledThrottler(t *testing.T) {
 	tabletenv.Config.EnableTxThrottler = true
 	tabletenv.Config.TxThrottlerHealthCheckCells = []string{"cell1", "cell2"}
 
-	throttler, err := tryCreateTxThrottler(mockTopoServer)
+	throttler, err := tryCreateTxThrottler(ts)
 	if err != nil {
 		t.Fatalf("want: nil, got: %v", err)
 	}
@@ -117,13 +139,3 @@ func TestEnabledThrottler(t *testing.T) {
 	}
 	throttler.Close()
 }
-
-// Commands to generate the mocks for this test.
-//go:generate mockgen -destination mock_toposerver_impl_test.go -package txthrottler github.com/youtube/vitess/go/vt/topo Impl
-// We need the following to fix the generated mock_impl.go, since mockgen imports the 'context'
-// package from the wrong place.
-// TODO(mberlin): Remove the next line once we use the Go 1.7 package 'context' everywhere.
-//go:generate sed -i s,github.com/youtube/vitess/vendor/,,g mock_toposerver_impl_test.go
-//go:generate mockgen -destination mock_healthcheck_test.go -package txthrottler github.com/youtube/vitess/go/vt/discovery HealthCheck
-//go:generate mockgen -destination mock_throttler_test.go -package txthrottler github.com/youtube/vitess/go/vt/tabletserver/txthrottler ThrottlerInterface
-//go:generate mockgen -destination mock_topology_watcher_test.go -package txthrottler github.com/youtube/vitess/go/vt/tabletserver/txthrottler TopologyWatcherInterface

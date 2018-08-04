@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package sandboxconn provides a fake QueryService implementation for tests.
 // It can return real results, and simulate error cases.
@@ -9,16 +21,15 @@ package sandboxconn
 import (
 	"fmt"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/querytypes"
-	"github.com/youtube/vitess/go/vt/vterrors"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 // SandboxConn satisfies the QueryService interface
@@ -55,11 +66,11 @@ type SandboxConn struct {
 	ReadTransactionCount     sync2.AtomicInt64
 
 	// Queries stores the non-batch requests received.
-	Queries []querytypes.BoundQuery
+	Queries []*querypb.BoundQuery
 
 	// BatchQueries stores the batch requests received
 	// Each batch request is inlined as a slice of Queries.
-	BatchQueries [][]querytypes.BoundQuery
+	BatchQueries [][]*querypb.BoundQuery
 
 	// Options stores the options received by all calls.
 	Options []*querypb.ExecuteOptions
@@ -105,13 +116,13 @@ func (sbc *SandboxConn) SetResults(r []*sqltypes.Result) {
 }
 
 // Execute is part of the QueryService interface.
-func (sbc *SandboxConn) Execute(ctx context.Context, target *querypb.Target, query string, bindVars map[string]interface{}, transactionID int64, options *querypb.ExecuteOptions) (*sqltypes.Result, error) {
+func (sbc *SandboxConn) Execute(ctx context.Context, target *querypb.Target, query string, bindVars map[string]*querypb.BindVariable, transactionID int64, options *querypb.ExecuteOptions) (*sqltypes.Result, error) {
 	sbc.ExecCount.Add(1)
-	bv := make(map[string]interface{})
+	bv := make(map[string]*querypb.BindVariable)
 	for k, v := range bindVars {
 		bv[k] = v
 	}
-	sbc.Queries = append(sbc.Queries, querytypes.BoundQuery{
+	sbc.Queries = append(sbc.Queries, &querypb.BoundQuery{
 		Sql:           query,
 		BindVariables: bv,
 	})
@@ -123,7 +134,7 @@ func (sbc *SandboxConn) Execute(ctx context.Context, target *querypb.Target, que
 }
 
 // ExecuteBatch is part of the QueryService interface.
-func (sbc *SandboxConn) ExecuteBatch(ctx context.Context, target *querypb.Target, queries []querytypes.BoundQuery, asTransaction bool, transactionID int64, options *querypb.ExecuteOptions) ([]sqltypes.Result, error) {
+func (sbc *SandboxConn) ExecuteBatch(ctx context.Context, target *querypb.Target, queries []*querypb.BoundQuery, asTransaction bool, transactionID int64, options *querypb.ExecuteOptions) ([]sqltypes.Result, error) {
 	sbc.ExecCount.Add(1)
 	if asTransaction {
 		sbc.AsTransactionCount.Add(1)
@@ -141,13 +152,13 @@ func (sbc *SandboxConn) ExecuteBatch(ctx context.Context, target *querypb.Target
 }
 
 // StreamExecute is part of the QueryService interface.
-func (sbc *SandboxConn) StreamExecute(ctx context.Context, target *querypb.Target, query string, bindVars map[string]interface{}, options *querypb.ExecuteOptions, callback func(*sqltypes.Result) error) error {
+func (sbc *SandboxConn) StreamExecute(ctx context.Context, target *querypb.Target, query string, bindVars map[string]*querypb.BindVariable, options *querypb.ExecuteOptions, callback func(*sqltypes.Result) error) error {
 	sbc.ExecCount.Add(1)
-	bv := make(map[string]interface{})
+	bv := make(map[string]*querypb.BindVariable)
 	for k, v := range bindVars {
 		bv[k] = v
 	}
-	sbc.Queries = append(sbc.Queries, querytypes.BoundQuery{
+	sbc.Queries = append(sbc.Queries, &querypb.BoundQuery{
 		Sql:           query,
 		BindVariables: bv,
 	})
@@ -160,7 +171,7 @@ func (sbc *SandboxConn) StreamExecute(ctx context.Context, target *querypb.Targe
 }
 
 // Begin is part of the QueryService interface.
-func (sbc *SandboxConn) Begin(ctx context.Context, target *querypb.Target) (int64, error) {
+func (sbc *SandboxConn) Begin(ctx context.Context, target *querypb.Target, options *querypb.ExecuteOptions) (int64, error) {
 	sbc.BeginCount.Add(1)
 	err := sbc.getError()
 	if err != nil {
@@ -269,8 +280,8 @@ func (sbc *SandboxConn) ReadTransaction(ctx context.Context, target *querypb.Tar
 }
 
 // BeginExecute is part of the QueryService interface.
-func (sbc *SandboxConn) BeginExecute(ctx context.Context, target *querypb.Target, query string, bindVars map[string]interface{}, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error) {
-	transactionID, err := sbc.Begin(ctx, target)
+func (sbc *SandboxConn) BeginExecute(ctx context.Context, target *querypb.Target, query string, bindVars map[string]*querypb.BindVariable, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error) {
+	transactionID, err := sbc.Begin(ctx, target, options)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -279,8 +290,8 @@ func (sbc *SandboxConn) BeginExecute(ctx context.Context, target *querypb.Target
 }
 
 // BeginExecuteBatch is part of the QueryService interface.
-func (sbc *SandboxConn) BeginExecuteBatch(ctx context.Context, target *querypb.Target, queries []querytypes.BoundQuery, asTransaction bool, options *querypb.ExecuteOptions) ([]sqltypes.Result, int64, error) {
-	transactionID, err := sbc.Begin(ctx, target)
+func (sbc *SandboxConn) BeginExecuteBatch(ctx context.Context, target *querypb.Target, queries []*querypb.BoundQuery, asTransaction bool, options *querypb.ExecuteOptions) ([]sqltypes.Result, int64, error) {
+	transactionID, err := sbc.Begin(ctx, target, options)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -290,7 +301,14 @@ func (sbc *SandboxConn) BeginExecuteBatch(ctx context.Context, target *querypb.T
 
 // MessageStream is part of the QueryService interface.
 func (sbc *SandboxConn) MessageStream(ctx context.Context, target *querypb.Target, name string, callback func(*sqltypes.Result) error) (err error) {
-	callback(SingleRowResult)
+	if err := sbc.getError(); err != nil {
+		return err
+	}
+	r := sbc.getNextResult()
+	if r == nil {
+		return nil
+	}
+	callback(r)
 	return nil
 }
 
@@ -307,21 +325,23 @@ var SandboxSQRowCount = int64(10)
 func (sbc *SandboxConn) SplitQuery(
 	ctx context.Context,
 	target *querypb.Target,
-	query querytypes.BoundQuery,
+	query *querypb.BoundQuery,
 	splitColumns []string,
 	splitCount int64,
 	numRowsPerQueryPart int64,
-	algorithm querypb.SplitQueryRequest_Algorithm) ([]querytypes.QuerySplit, error) {
+	algorithm querypb.SplitQueryRequest_Algorithm) ([]*querypb.QuerySplit, error) {
 	err := sbc.getError()
 	if err != nil {
 		return nil, err
 	}
-	splits := []querytypes.QuerySplit{
+	splits := []*querypb.QuerySplit{
 		{
-			Sql: fmt.Sprintf(
-				"query:%v, splitColumns:%v, splitCount:%v,"+
-					" numRowsPerQueryPart:%v, algorithm:%v, shard:%v",
-				query, splitColumns, splitCount, numRowsPerQueryPart, algorithm, sbc.tablet.Shard),
+			Query: &querypb.BoundQuery{
+				Sql: fmt.Sprintf(
+					"query:%v, splitColumns:%v, splitCount:%v,"+
+						" numRowsPerQueryPart:%v, algorithm:%v, shard:%v",
+					query, splitColumns, splitCount, numRowsPerQueryPart, algorithm, sbc.tablet.Shard),
+			},
 		},
 	}
 	return splits, nil
@@ -370,7 +390,21 @@ var SingleRowResult = &sqltypes.Result{
 	RowsAffected: 1,
 	InsertID:     0,
 	Rows: [][]sqltypes.Value{{
-		sqltypes.MakeTrusted(sqltypes.Int32, []byte("1")),
-		sqltypes.MakeTrusted(sqltypes.VarChar, []byte("foo")),
+		sqltypes.NewInt32(1),
+		sqltypes.NewVarChar("foo"),
+	}},
+}
+
+// StreamRowResult is SingleRowResult with RowsAffected set to 0.
+var StreamRowResult = &sqltypes.Result{
+	Fields: []*querypb.Field{
+		{Name: "id", Type: sqltypes.Int32},
+		{Name: "value", Type: sqltypes.VarChar},
+	},
+	RowsAffected: 0,
+	InsertID:     0,
+	Rows: [][]sqltypes.Value{{
+		sqltypes.NewInt32(1),
+		sqltypes.NewVarChar("foo"),
 	}},
 }

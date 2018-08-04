@@ -1,14 +1,31 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package discovery
 
 import (
+	"sort"
 	"sync"
 
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/sandboxconn"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
+	"vitess.io/vitess/go/vt/vttablet/sandboxconn"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // This file contains the definitions for a FakeHealthCheck class to
@@ -90,6 +107,12 @@ func (fhc *FakeHealthCheck) RemoveTablet(tablet *topodatapb.Tablet) {
 	delete(fhc.items, key)
 }
 
+// ReplaceTablet removes the old tablet and adds the new.
+func (fhc *FakeHealthCheck) ReplaceTablet(old, new *topodatapb.Tablet, name string) {
+	fhc.RemoveTablet(old)
+	fhc.AddTablet(new, name)
+}
+
 // GetConnection returns the TabletConn of the given tablet.
 func (fhc *FakeHealthCheck) GetConnection(key string) queryservice.QueryService {
 	fhc.mu.RLock()
@@ -100,9 +123,21 @@ func (fhc *FakeHealthCheck) GetConnection(key string) queryservice.QueryService 
 	return nil
 }
 
-// CacheStatus is not implemented.
+// CacheStatus returns the status for each tablet
 func (fhc *FakeHealthCheck) CacheStatus() TabletsCacheStatusList {
-	return nil
+	fhc.mu.Lock()
+	defer fhc.mu.Unlock()
+
+	stats := make(TabletsCacheStatusList, 0, len(fhc.items))
+	for _, item := range fhc.items {
+		stats = append(stats, &TabletsCacheStatus{
+			Cell:         "FakeCell",
+			Target:       item.ts.Target,
+			TabletsStats: TabletStatsList{item.ts},
+		})
+	}
+	sort.Sort(stats)
+	return stats
 }
 
 // Close is not implemented.
@@ -122,10 +157,11 @@ func (fhc *FakeHealthCheck) Reset() {
 	fhc.items = make(map[string]*fhcItem)
 }
 
-// AddTestTablet inserts a fake entry into FakeHealthCheck.
+// AddFakeTablet inserts a fake entry into FakeHealthCheck.
 // The Tablet can be talked to using the provided connection.
 // The Listener is called, as if AddTablet had been called.
-func (fhc *FakeHealthCheck) AddTestTablet(cell, host string, port int32, keyspace, shard string, tabletType topodatapb.TabletType, serving bool, reparentTS int64, err error) *sandboxconn.SandboxConn {
+// For flexibility the connection is created via a connFactory callback
+func (fhc *FakeHealthCheck) AddFakeTablet(cell, host string, port int32, keyspace, shard string, tabletType topodatapb.TabletType, serving bool, reparentTS int64, err error, connFactory func(*topodatapb.Tablet) queryservice.QueryService) queryservice.QueryService {
 	t := topo.NewTablet(0, cell, host)
 	t.Keyspace = keyspace
 	t.Shard = shard
@@ -155,13 +191,22 @@ func (fhc *FakeHealthCheck) AddTestTablet(cell, host string, port int32, keyspac
 	item.ts.TabletExternallyReparentedTimestamp = reparentTS
 	item.ts.Stats = &querypb.RealtimeStats{}
 	item.ts.LastError = err
-	conn := sandboxconn.NewSandboxConn(t)
+	conn := connFactory(t)
 	item.conn = conn
 
 	if fhc.listener != nil {
 		fhc.listener.StatsUpdate(item.ts)
 	}
 	return conn
+}
+
+// AddTestTablet adds a fake tablet for tests using the SandboxConn and returns
+// the fake connection
+func (fhc *FakeHealthCheck) AddTestTablet(cell, host string, port int32, keyspace, shard string, tabletType topodatapb.TabletType, serving bool, reparentTS int64, err error) *sandboxconn.SandboxConn {
+	conn := fhc.AddFakeTablet(cell, host, port, keyspace, shard, tabletType, serving, reparentTS, err, func(tablet *topodatapb.Tablet) queryservice.QueryService {
+		return sandboxconn.NewSandboxConn(tablet)
+	})
+	return conn.(*sandboxconn.SandboxConn)
 }
 
 // GetAllTablets returns all the tablets we have.

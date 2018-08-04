@@ -1,14 +1,31 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.jdbc;
 
 import com.google.common.annotations.VisibleForTesting;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.util.regex.PatternSyntaxException;
+
 import io.vitess.proto.Query;
 import io.vitess.util.Constants;
 import io.vitess.util.MysqlDefs;
 import io.vitess.util.StringUtils;
 import io.vitess.util.charset.CharsetMapping;
-import java.sql.SQLException;
-import java.sql.Types;
-import java.util.regex.PatternSyntaxException;
 
 public class FieldWithMetadata {
 
@@ -94,12 +111,18 @@ public class FieldWithMetadata {
                     this.encoding = "UTF-8";
                 }
                 this.isSingleBit = this.javaType == Types.BIT && (field.getColumnLength() == 0 || field.getColumnLength() == 1);
-                // Re-map improperly typed binary types as non-binary counterparts if BINARY flag not set
-                boolean isBinary = isBinary();
-                if (javaType == Types.LONGVARBINARY && !isBinary) {
-                    this.javaType = Types.LONGVARCHAR;
-                } else if (javaType == Types.VARBINARY && !isBinary) {
+
+                // The server sends back a BINARY/VARBINARY field whenever varchar/text data is stored on disk as binary, but
+                // that doesn't mean the data is actually binary. For instance, a field with collation ascii_bin
+                // gets stored on disk as bytes for case-sensitive comparison, but is still an ascii string.
+                // Re-map these BINARY/VARBINARY types to CHAR/VARCHAR when the data is not actually
+                // binary encoded
+                boolean isBinaryEncoded = isBinary() && collationIndex == CharsetMapping.MYSQL_COLLATION_INDEX_binary;
+                if (javaType == Types.VARBINARY && !isBinaryEncoded) {
                     this.javaType = Types.VARCHAR;
+                }
+                if (javaType == Types.BINARY && !isBinaryEncoded) {
+                    this.javaType = Types.CHAR;
                 }
             } else {
                 // Default encoding for number-types and date-types
@@ -139,6 +162,10 @@ public class FieldWithMetadata {
                 }
             }
         } else {
+            // MySQL always encodes JSON data with utf8mb4. Discard whatever else we've found, if the type is JSON
+            if (vitessType == Query.Type.JSON) {
+                this.encoding = "UTF-8";
+            }
             // Defaults to appease final variables when not including all fields
             this.isImplicitTempTable = false;
             this.isSingleBit = false;
@@ -325,7 +352,7 @@ public class FieldWithMetadata {
 
         // Detect CHAR(n) CHARACTER SET BINARY which is a synonym for fixed-length binary types
         if (this.collationIndex == CharsetMapping.MYSQL_COLLATION_INDEX_binary && isBinary()
-            && (this.javaType == Types.CHAR || this.javaType == Types.VARCHAR)) {
+            && (this.vitessType == Query.Type.CHAR || this.vitessType == Query.Type.VARCHAR)) {
             // Okay, queries resolved by temp tables also have this 'signature', check for that
             return !isImplicitTemporaryTable();
         }

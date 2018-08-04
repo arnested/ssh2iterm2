@@ -35,6 +35,8 @@ Vindexes offer many flexibilities:
 
 The Primary Vindex is analogous to a database primary key. Every sharded table must have one defined. A Primary Vindex must be unique: given an input value, it must produce a single keyspace ID. This unique mapping will be used at the time of insert to decide the target shard for a row. Conceptually, this is also equivalent to the NoSQL Sharding Key, and we often refer to the Primary Vindex as the Sharding Key.
 
+Uniqueness for a Primary Vindex does not mean that the column has to be a primary key or unique in the MySQL schema. You can have multiple rows that map to the same keyspace ID. The Vindex uniqueness constraint is only used to make sure that all rows for a keyspace ID live in the same shard.
+
 However, there is a subtle difference: NoSQL datastores let you choose the Sharding Key, but the Sharding Scheme is generally hardcoded in the engine. In Vitess, the choice of Vindex lets you control how a column value maps to a keyspace ID. In other words, a Primary Vindex in Vitess not only defines the Sharding Key, it also decides the Sharding Scheme.
 
 Vindexes come in many varieties. Some of them can be used as Primary Vindex, and others have different purposes. The following sections will describe their properties.
@@ -101,7 +103,7 @@ Lookup NonUnique | 20
 
 In the case of a simple select, Vitess scans the WHERE clause to match references to Vindex columns and chooses the best one to use. If there is no match and the query is simple without complex constructs like aggreates, etc, it is sent to all shards.
 
-Vitess can handle more complex queries. For now, you can refer to the [design doc](https://github.com/youtube/vitess/blob/master/doc/V3HighLevelDesign.md) on how it handles them.
+Vitess can handle more complex queries. For now, you can refer to the [design doc](https://github.com/vitessio/vitess/blob/master/doc/V3HighLevelDesign.md) on how it handles them.
 
 #### Insert
 
@@ -111,7 +113,7 @@ Vitess can handle more complex queries. For now, you can refer to the [design do
 
 #### Update
 
-The WHERE clause is used to route the update. Changing the value of a Vindex column is unsupported because this may result in a row being migrated from one shard to another.
+The WHERE clause is used to route the update. Updating the value of a Vindex column is supported, but with a restriction: the change in the column value should not result in the row being moved from one shard to another. A workaround is to perform a delete followed by insert, which works as expected.
 
 #### Delete
 
@@ -136,7 +138,7 @@ Custom vindexes can also be plugged in as needed.
 
 ## Sequences
 
-Auto-increment columns do not work very well for sharded tables. [Vitess sequences](/user-guide/vitess-sequences.html) solve this problem. Sequence tables must be specified in the VSchema, and then tied to table columns. At the time of insert, if no value is specified for such a column, VTGate will generate a number for it using the sequence table.
+Auto-increment columns do not work very well for sharded tables. [Vitess sequences]({% link user-guide/vitess-sequences.md %}) solve this problem. Sequence tables must be specified in the VSchema, and then tied to table columns. At the time of insert, if no value is specified for such a column, VTGate will generate a number for it using the sequence table.
 
 ## VSchema
 
@@ -147,7 +149,7 @@ If you have multiple unsharded keyspaces, you can still avoid defining a VSchema
 1. Connect to a keyspace and all queries are sent to it.
 2. Connect to Vitess without specifying a keyspace, but use qualifed names for tables, like `keyspace.table` in your queries.
 
-However, once the setup exceeds the above complexity, VSchemas become a necessity. Vitess has a [working demo](https://github.com/youtube/vitess/tree/master/examples/demo) of VSchemas. This section documents the various features highlighted with snippets pulled from the demo.
+However, once the setup exceeds the above complexity, VSchemas become a necessity. Vitess has a [working demo](https://github.com/vitessio/vitess/tree/master/examples/demo) of VSchemas. This section documents the various features highlighted with snippets pulled from the demo.
 
 ### Unsharded Table
 

@@ -1,10 +1,25 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package vitessdriver
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"net"
 	"os"
@@ -15,9 +30,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/youtube/vitess/go/vt/vtgate/grpcvtgateservice"
-
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	"vitess.io/vitess/go/sqltypes"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	"vitess.io/vitess/go/vt/vtgate/grpcvtgateservice"
 )
 
 var (
@@ -48,6 +63,11 @@ func TestMain(m *testing.M) {
 }
 
 func TestOpen(t *testing.T) {
+	locationPST, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+
 	var testcases = []struct {
 		desc    string
 		connStr string
@@ -55,39 +75,51 @@ func TestOpen(t *testing.T) {
 	}{
 		{
 			desc:    "Open()",
-			connStr: fmt.Sprintf(`{"address": "%s", "tablet_type": "replica", "timeout": %d}`, testAddress, int64(30*time.Second)),
+			connStr: fmt.Sprintf(`{"address": "%s", "target": "@replica", "timeout": %d}`, testAddress, int64(30*time.Second)),
 			conn: &conn{
 				Configuration: Configuration{
-					Protocol:   "grpc",
-					TabletType: "replica",
-					Timeout:    30 * time.Second,
+					Target: "@replica",
 				},
-				tabletTypeProto: topodatapb.TabletType_REPLICA,
+				convert: &converter{
+					location: time.UTC,
+				},
 			},
 		},
 		{
 			desc:    "Open() (defaults omitted)",
 			connStr: fmt.Sprintf(`{"address": "%s", "timeout": %d}`, testAddress, int64(30*time.Second)),
 			conn: &conn{
-				Configuration: Configuration{
-					Protocol:   "grpc",
-					TabletType: "master",
-					Timeout:    30 * time.Second,
+				Configuration: Configuration{},
+				convert: &converter{
+					location: time.UTC,
 				},
-				tabletTypeProto: topodatapb.TabletType_MASTER,
 			},
 		},
 		{
 			desc:    "Open() with keyspace",
-			connStr: fmt.Sprintf(`{"address": "%s", "keyspace": "ks", "shard": "0", "tablet_type": "replica", "timeout": %d}`, testAddress, int64(30*time.Second)),
+			connStr: fmt.Sprintf(`{"protocol": "grpc", "address": "%s", "target": "ks:0@replica", "timeout": %d}`, testAddress, int64(30*time.Second)),
 			conn: &conn{
 				Configuration: Configuration{
-					Protocol:   "grpc",
-					Keyspace:   "ks",
-					TabletType: "replica",
-					Timeout:    30 * time.Second,
+					Protocol: "grpc",
+					Target:   "ks:0@replica",
 				},
-				tabletTypeProto: topodatapb.TabletType_REPLICA,
+				convert: &converter{
+					location: time.UTC,
+				},
+			},
+		},
+		{
+			desc: "Open() with custom timezone",
+			connStr: fmt.Sprintf(
+				`{"address": "%s", "timeout": %d, "defaultlocation": "America/Los_Angeles"}`,
+				testAddress, int64(30*time.Second)),
+			conn: &conn{
+				Configuration: Configuration{
+					DefaultLocation: "America/Los_Angeles",
+				},
+				convert: &converter{
+					location: locationPST,
+				},
 			},
 		},
 	}
@@ -102,9 +134,10 @@ func TestOpen(t *testing.T) {
 		wantc := tc.conn
 		newc := *(c.(*conn))
 		newc.Address = ""
-		newc.vtgateConn = nil
+		newc.conn = nil
+		newc.session = nil
 		if !reflect.DeepEqual(&newc, wantc) {
-			t.Errorf("%v: conn: %+v, want %+v", tc.desc, &newc, wantc)
+			t.Errorf("%v: conn:\n%+v, want\n%+v", tc.desc, &newc, wantc)
 		}
 	}
 }
@@ -125,117 +158,76 @@ func TestOpen_InvalidJson(t *testing.T) {
 	}
 }
 
-func TestOpen_ValidTabletTypeRequired(t *testing.T) {
-	_, err := drv{}.Open(`{"tablet_type": "foobar"}`)
-	want := "unknown TabletType foobar"
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("err: %v, want %s", err, want)
+func TestBeginIsolation(t *testing.T) {
+	db, err := Open(testAddress, "@master")
+	if err != nil {
+		t.Error(err)
+	}
+	defer db.Close()
+	_, err = db.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	want := errIsolationUnsupported.Error()
+	if err == nil || err.Error() != want {
+		t.Errorf("Begin: %v, want %s", err, want)
 	}
 }
 
 func TestExec(t *testing.T) {
-	var testcases = []struct {
-		desc        string
-		config      Configuration
-		requestName string
-	}{
-		{
-			desc: "vtgate",
-			config: Configuration{
-				TabletType: "rdonly",
-				Timeout:    30 * time.Second,
-			},
-			requestName: "request",
-		},
-		{
-			desc: "vtgate with keyspace",
-			config: Configuration{
-				Keyspace:   "ks",
-				TabletType: "rdonly",
-				Timeout:    30 * time.Second,
-			},
-			requestName: "requestKeyspace",
-		},
+	db, err := Open(testAddress, "@rdonly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	s, err := db.Prepare("request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	r, err := s.Exec(int64(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := r.LastInsertId(); v != 72 {
+		t.Errorf("insert id: %d, want 72", v)
+	}
+	if v, _ := r.RowsAffected(); v != 123 {
+		t.Errorf("rows affected: %d, want 123", v)
 	}
 
-	for _, tc := range testcases {
-		db, err := Open(testAddress, tc.config.Keyspace, tc.config.TabletType, tc.config.Timeout)
-		if err != nil {
-			t.Errorf("%v: %v", tc.desc, err)
-		}
-		defer db.Close()
+	s2, err := db.Prepare("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
 
-		s, err := db.Prepare(tc.requestName)
-		if err != nil {
-			t.Errorf("%v: %v", tc.desc, err)
-		}
-		defer s.Close()
-
-		r, err := s.Exec(int64(0))
-		if err != nil {
-			t.Errorf("%v: %v", tc.desc, err)
-		}
-		if v, _ := r.LastInsertId(); v != 72 {
-			t.Errorf("%v: insert id: %d, want 72", tc.desc, v)
-		}
-		if v, _ := r.RowsAffected(); v != 123 {
-			t.Errorf("%v: rows affected: %d, want 123", tc.desc, v)
-		}
-
-		s2, err := db.Prepare("none")
-		if err != nil {
-			t.Errorf("%v: %v", tc.desc, err)
-		}
-		defer s2.Close()
-
-		_, err = s2.Exec(nil)
-		want := "no match for: none"
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%v: err: %v, does not contain %s", tc.desc, err, want)
-		}
+	_, err = s2.Exec()
+	want := "no match for: none"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("err: %v, does not contain %s", err, want)
 	}
 }
 
 func TestConfigurationToJSON(t *testing.T) {
-	var testcases = []struct {
-		desc   string
-		config Configuration
-		json   string
-	}{
-		{
-			desc: "all fields set",
-			config: Configuration{
-				Protocol:   "some-invalid-protocol",
-				Keyspace:   "ks2",
-				TabletType: "replica",
-				Streaming:  true,
-				Timeout:    1 * time.Second,
-			},
-			json: `{"Protocol":"some-invalid-protocol","Address":"","Keyspace":"ks2","tablet_type":"replica","Streaming":true,"Timeout":1000000000}`,
-		},
-		{
-			desc: "default fields are empty",
-			config: Configuration{
-				Keyspace: "ks2",
-				Timeout:  1 * time.Second,
-			},
-			json: `{"Protocol":"grpc","Address":"","Keyspace":"ks2","tablet_type":"master","Streaming":false,"Timeout":1000000000}`,
-		},
+	config := Configuration{
+		Protocol:        "some-invalid-protocol",
+		Target:          "ks2",
+		Streaming:       true,
+		DefaultLocation: "Local",
 	}
+	want := `{"Protocol":"some-invalid-protocol","Address":"","Target":"ks2","Streaming":true,"DefaultLocation":"Local"}`
 
-	for _, tc := range testcases {
-		json, err := tc.config.toJSON()
-		if err != nil {
-			t.Errorf("%v: JSON conversion should have succeeded but did not: %v", tc.desc, err)
-		}
-		if json != tc.json {
-			t.Errorf("%v: Configuration.JSON(): got: %v want: %v Configuration: %v", tc.desc, json, tc.json, tc.config)
-		}
+	json, err := config.toJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if json != want {
+		t.Errorf("Configuration.JSON(): got: %v want: %v", json, want)
 	}
 }
 
 func TestExecStreamingNotAllowed(t *testing.T) {
-	db, err := OpenForStreaming(testAddress, "", "rdonly", 30*time.Second)
+	db, err := OpenForStreaming(testAddress, "@rdonly")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,46 +254,21 @@ func TestQuery(t *testing.T) {
 		{
 			desc: "non-streaming, vtgate",
 			config: Configuration{
-				Protocol:   "grpc",
-				Address:    testAddress,
-				TabletType: "rdonly",
-				Timeout:    30 * time.Second,
+				Protocol: "grpc",
+				Address:  testAddress,
+				Target:   "@rdonly",
 			},
 			requestName: "request",
-		},
-		{
-			desc: "non-streaming, vtgate with keyspace",
-			config: Configuration{
-				Protocol:   "grpc",
-				Address:    testAddress,
-				Keyspace:   "ks",
-				TabletType: "rdonly",
-				Timeout:    30 * time.Second,
-			},
-			requestName: "requestKeyspace",
 		},
 		{
 			desc: "streaming, vtgate",
 			config: Configuration{
-				Protocol:   "grpc",
-				Address:    testAddress,
-				TabletType: "rdonly",
-				Timeout:    30 * time.Second,
-				Streaming:  true,
+				Protocol:  "grpc",
+				Address:   testAddress,
+				Target:    "@rdonly",
+				Streaming: true,
 			},
 			requestName: "request",
-		},
-		{
-			desc: "streaming, vtgate with keyspace",
-			config: Configuration{
-				Protocol:   "grpc",
-				Address:    testAddress,
-				Keyspace:   "ks",
-				TabletType: "rdonly",
-				Timeout:    30 * time.Second,
-				Streaming:  true,
-			},
-			requestName: "requestKeyspace",
 		},
 	}
 
@@ -364,7 +331,7 @@ func TestQuery(t *testing.T) {
 		}
 		defer s2.Close()
 
-		rows, err := s2.Query(nil)
+		rows, err := s2.Query()
 		want := "no match for: none"
 		if tc.config.Streaming && err == nil {
 			defer rows.Close()
@@ -380,117 +347,273 @@ func TestQuery(t *testing.T) {
 	}
 }
 
-func TestTx(t *testing.T) {
+func TestBindVars(t *testing.T) {
+	var testcases = []struct {
+		desc   string
+		in     []driver.NamedValue
+		out    map[string]*querypb.BindVariable
+		outErr string
+	}{{
+		desc: "all names",
+		in: []driver.NamedValue{{
+			Name:  "n1",
+			Value: int64(0),
+		}, {
+			Name:  "n2",
+			Value: "abcd",
+		}},
+		out: map[string]*querypb.BindVariable{
+			"n1": sqltypes.Int64BindVariable(0),
+			"n2": sqltypes.StringBindVariable("abcd"),
+		},
+	}, {
+		desc: "prefixed names",
+		in: []driver.NamedValue{{
+			Name:  ":n1",
+			Value: int64(0),
+		}, {
+			Name:  "@n2",
+			Value: "abcd",
+		}},
+		out: map[string]*querypb.BindVariable{
+			"n1": sqltypes.Int64BindVariable(0),
+			"n2": sqltypes.StringBindVariable("abcd"),
+		},
+	}, {
+		desc: "all positional",
+		in: []driver.NamedValue{{
+			Ordinal: 1,
+			Value:   int64(0),
+		}, {
+			Ordinal: 2,
+			Value:   "abcd",
+		}},
+		out: map[string]*querypb.BindVariable{
+			"v1": sqltypes.Int64BindVariable(0),
+			"v2": sqltypes.StringBindVariable("abcd"),
+		},
+	}, {
+		desc: "name, then position",
+		in: []driver.NamedValue{{
+			Name:  "n1",
+			Value: int64(0),
+		}, {
+			Ordinal: 2,
+			Value:   "abcd",
+		}},
+		outErr: errNoIntermixing.Error(),
+	}, {
+		desc: "position, then name",
+		in: []driver.NamedValue{{
+			Ordinal: 1,
+			Value:   int64(0),
+		}, {
+			Name:  "n2",
+			Value: "abcd",
+		}},
+		outErr: errNoIntermixing.Error(),
+	}}
+
+	converter := &converter{}
+
+	for _, tc := range testcases {
+		bv, err := converter.bindVarsFromNamedValues(tc.in)
+		if bv != nil {
+			if !reflect.DeepEqual(bv, tc.out) {
+				t.Errorf("%s: %v, want %v", tc.desc, bv, tc.out)
+			}
+		} else {
+			if err == nil || err.Error() != tc.outErr {
+				t.Errorf("%s: %v, want %v", tc.desc, err, tc.outErr)
+			}
+		}
+	}
+}
+
+func TestDatetimeQuery(t *testing.T) {
 	var testcases = []struct {
 		desc        string
 		config      Configuration
 		requestName string
 	}{
 		{
-			desc: "vtgate",
+			desc: "datetime & date, vtgate",
 			config: Configuration{
-				Protocol:   "grpc",
-				Address:    testAddress,
-				TabletType: "master",
-				Timeout:    30 * time.Second,
+				Protocol: "grpc",
+				Address:  testAddress,
+				Target:   "@rdonly",
 			},
-			requestName: "txRequest",
+			requestName: "requestDates",
 		},
 		{
-			desc: "vtgate with keyspace",
+			desc: "datetime & date (local timezone), vtgate",
 			config: Configuration{
-				Protocol:   "grpc",
-				Address:    testAddress,
-				Keyspace:   "ks",
-				TabletType: "master",
-				Timeout:    30 * time.Second,
+				Protocol:        "grpc",
+				Address:         testAddress,
+				Target:          "@rdonly",
+				DefaultLocation: "Local",
 			},
-			requestName: "txRequestKeyspace",
+			requestName: "requestDates",
+		},
+		{
+			desc: "datetime & date, streaming, vtgate",
+			config: Configuration{
+				Protocol:  "grpc",
+				Address:   testAddress,
+				Target:    "@rdonly",
+				Streaming: true,
+			},
+			requestName: "requestDates",
 		},
 	}
 
 	for _, tc := range testcases {
-		testTxCommit(t, tc.config, tc.desc, tc.requestName)
+		db, err := OpenWithConfiguration(tc.config)
+		if err != nil {
+			t.Errorf("%v: %v", tc.desc, err)
+		}
+		defer db.Close()
 
-		testTxRollback(t, tc.config, tc.desc, tc.requestName)
+		s, err := db.Prepare(tc.requestName)
+		if err != nil {
+			t.Errorf("%v: %v", tc.desc, err)
+		}
+		defer s.Close()
+
+		r, err := s.Query(0)
+		if err != nil {
+			t.Errorf("%v: %v", tc.desc, err)
+		}
+		defer r.Close()
+
+		cols, err := r.Columns()
+		if err != nil {
+			t.Errorf("%v: %v", tc.desc, err)
+		}
+		wantCols := []string{
+			"fieldDatetime",
+			"fieldDate",
+		}
+		if !reflect.DeepEqual(cols, wantCols) {
+			t.Errorf("%v: cols: %v, want %v", tc.desc, cols, wantCols)
+		}
+
+		location := time.UTC
+		if tc.config.DefaultLocation != "" {
+			location, err = time.LoadLocation(tc.config.DefaultLocation)
+			if err != nil {
+				t.Errorf("%v: %v", tc.desc, err)
+			}
+		}
+
+		count := 0
+		wantValues := []struct {
+			fieldDatetime time.Time
+			fieldDate     time.Time
+		}{{
+			time.Date(2009, 3, 29, 17, 22, 11, 0, location),
+			time.Date(2006, 7, 2, 0, 0, 0, 0, location),
+		}, {
+			time.Time{},
+			time.Time{},
+		}}
+
+		for r.Next() {
+			var fieldDatetime time.Time
+			var fieldDate time.Time
+			err := r.Scan(&fieldDatetime, &fieldDate)
+			if err != nil {
+				t.Errorf("%v: %v", tc.desc, err)
+			}
+			if want := wantValues[count].fieldDatetime; fieldDatetime != want {
+				t.Errorf("%v: wrong value for fieldDatetime: got: %v want: %v", tc.desc, fieldDatetime, want)
+			}
+			if want := wantValues[count].fieldDate; fieldDate != want {
+				t.Errorf("%v: wrong value for fieldDate: got: %v want: %v", tc.desc, fieldDate, want)
+			}
+			count++
+		}
+
+		if count != len(wantValues) {
+			t.Errorf("%v: count: %d, want %d", tc.desc, count, len(wantValues))
+		}
 	}
 }
 
-func testTxCommit(t *testing.T, c Configuration, desc, requestName string) {
+func TestTx(t *testing.T) {
+	c := Configuration{
+		Protocol: "grpc",
+		Address:  testAddress,
+		Target:   "@master",
+	}
+
 	db, err := OpenWithConfiguration(c)
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 	defer db.Close()
 
 	tx, err := db.Begin()
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 
-	s, err := tx.Prepare(requestName)
+	s, err := tx.Prepare("txRequest")
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 
 	_, err = s.Exec(int64(0))
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 	err = tx.Commit()
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 	// Commit on committed transaction is caught by Golang sql package.
 	// We actually don't have to cover this in our code.
 	err = tx.Commit()
 	want := "sql: Transaction has already been committed or rolled back"
 	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("%v: err: %v, does not contain %s", desc, err, want)
+		t.Errorf("err: %v, does not contain %s", err, want)
 	}
-}
 
-func testTxRollback(t *testing.T, c Configuration, desc, requestName string) {
-	db, err := OpenWithConfiguration(c)
+	// Test rollback now.
+	tx, err = db.Begin()
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
-	defer db.Close()
-
-	tx, err := db.Begin()
+	s, err = tx.Prepare("txRequest")
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
-	}
-	s, err := tx.Prepare(requestName)
-	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 	_, err = s.Query(int64(0))
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 	err = tx.Rollback()
 	if err != nil {
-		t.Errorf("%v: %v", desc, err)
+		t.Fatal(err)
 	}
 	// Rollback on rolled back transaction is caught by Golang sql package.
 	// We actually don't have to cover this in our code.
 	err = tx.Rollback()
-	want := "sql: Transaction has already been committed or rolled back"
+	want = "sql: Transaction has already been committed or rolled back"
 	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("%v: err: %v, does not contain %s", desc, err, want)
+		t.Errorf("err: %v, does not contain %s", err, want)
 	}
 }
 
 func TestTxExecStreamingNotAllowed(t *testing.T) {
-	db, err := OpenForStreaming(testAddress, "", "rdonly", 30*time.Second)
+	db, err := OpenForStreaming(testAddress, "@rdonly")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
 	_, err = db.Begin()
-	want := "transaction not allowed for streaming connection"
+	want := "Exec not allowed for streaming connection"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("err: %v, does not contain %s", err, want)
 	}

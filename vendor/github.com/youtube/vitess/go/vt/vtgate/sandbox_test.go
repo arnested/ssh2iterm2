@@ -1,27 +1,40 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package vtgate
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"sync"
-	"time"
 
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vterrors"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/sandboxconn"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletconn"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/json2"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
+	"vitess.io/vitess/go/vt/vttablet/sandboxconn"
+	"vitess.io/vitess/go/vt/vttablet/tabletconn"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	vschemapb "github.com/youtube/vitess/go/vt/proto/vschema"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vschemapb "vitess.io/vitess/go/vt/proto/vschema"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 // sandbox_test.go provides a sandbox for unit testing VTGate.
@@ -66,7 +79,9 @@ func getSandboxSrvVSchema() *vschemapb.SrvVSchema {
 	defer sandboxMu.Unlock()
 	for keyspace, sandbox := range ksToSandbox {
 		var vs vschemapb.Keyspace
-		_ = json.Unmarshal([]byte(sandbox.VSchema), &vs)
+		if err := json2.Unmarshal([]byte(sandbox.VSchema), &vs); err != nil {
+			panic(err)
+		}
 		result.Keyspaces[keyspace] = &vs
 	}
 	return result
@@ -95,9 +110,6 @@ type sandbox struct {
 	// DialMustFail specifies how often sandboxDialer must fail before succeeding
 	DialMustFail int
 
-	// DialMustTimeout specifies how often sandboxDialer must time out
-	DialMustTimeout int
-
 	// KeyspaceServedFrom specifies the served-from keyspace for vertical resharding
 	KeyspaceServedFrom string
 
@@ -119,7 +131,6 @@ func (s *sandbox) Reset() {
 	s.SrvKeyspaceMustFail = 0
 	s.DialCounter = 0
 	s.DialMustFail = 0
-	s.DialMustTimeout = 0
 	s.KeyspaceServedFrom = ""
 	s.ShardSpec = DefaultShardSpec
 	s.SrvKeyspaceCallback = nil
@@ -206,11 +217,27 @@ func createUnshardedKeyspace() (*topodatapb.SrvKeyspace, error) {
 	return unshardedSrvKeyspace, nil
 }
 
-// sandboxTopo satisfies the SrvTopoServer interface
+// sandboxTopo satisfies the srvtopo.Server interface
 type sandboxTopo struct {
+	topoServer *topo.Server
 }
 
-// GetSrvKeyspaceNames is part of SrvTopoServer.
+// newSandboxForCells creates a new topo with a backing memory topo for
+// the given cells.
+//
+// when this version is used, WatchSrvVSchema can properly simulate watches
+func newSandboxForCells(cells []string) *sandboxTopo {
+	return &sandboxTopo{
+		topoServer: memorytopo.NewServer(cells...),
+	}
+}
+
+// GetTopoServer is part of the srvtopo.Server interface
+func (sct *sandboxTopo) GetTopoServer() *topo.Server {
+	return sct.topoServer
+}
+
+// GetSrvKeyspaceNames is part of the srvtopo.Server interface.
 func (sct *sandboxTopo) GetSrvKeyspaceNames(ctx context.Context, cell string) ([]string, error) {
 	sandboxMu.Lock()
 	defer sandboxMu.Unlock()
@@ -221,7 +248,7 @@ func (sct *sandboxTopo) GetSrvKeyspaceNames(ctx context.Context, cell string) ([
 	return keyspaces, nil
 }
 
-// GetSrvKeyspace is part of SrvTopoServer.
+// GetSrvKeyspace is part of the srvtopo.Server interface.
 func (sct *sandboxTopo) GetSrvKeyspace(ctx context.Context, cell, keyspace string) (*topodatapb.SrvKeyspace, error) {
 	sand := getSandbox(keyspace)
 	sand.sandmu.Lock()
@@ -258,14 +285,31 @@ func (sct *sandboxTopo) GetSrvKeyspace(ctx context.Context, cell, keyspace strin
 	return createShardedSrvKeyspace(sand.ShardSpec, sand.KeyspaceServedFrom)
 }
 
-// WatchSrvVSchema is part of SrvTopoServer.
-func (sct *sandboxTopo) WatchSrvVSchema(ctx context.Context, cell string) (*topo.WatchSrvVSchemaData, <-chan *topo.WatchSrvVSchemaData, topo.CancelFunc) {
-	return &topo.WatchSrvVSchemaData{
-		Value: getSandboxSrvVSchema(),
-	}, make(chan *topo.WatchSrvVSchemaData), func() {}
+// WatchSrvVSchema is part of the srvtopo.Server interface.
+//
+// If the sandbox was created with a backing topo service, piggy back on it
+// to properly simulate watches, otherwise just immediately call back the
+// caller.
+func (sct *sandboxTopo) WatchSrvVSchema(ctx context.Context, cell string, callback func(*vschemapb.SrvVSchema, error)) {
+	srvVSchema := getSandboxSrvVSchema()
+
+	if sct.topoServer == nil {
+		callback(srvVSchema, nil)
+		return
+	}
+
+	sct.topoServer.UpdateSrvVSchema(ctx, cell, srvVSchema)
+	current, updateChan, _ := sct.topoServer.WatchSrvVSchema(ctx, cell)
+	callback(current.Value, nil)
+	go func() {
+		for {
+			update := <-updateChan
+			callback(update.Value, update.Err)
+		}
+	}()
 }
 
-func sandboxDialer(tablet *topodatapb.Tablet, timeout time.Duration) (queryservice.QueryService, error) {
+func sandboxDialer(tablet *topodatapb.Tablet, failFast grpcclient.FailFast) (queryservice.QueryService, error) {
 	sand := getSandbox(tablet.Keyspace)
 	sand.sandmu.Lock()
 	defer sand.sandmu.Unlock()
@@ -273,11 +317,6 @@ func sandboxDialer(tablet *topodatapb.Tablet, timeout time.Duration) (queryservi
 	if sand.DialMustFail > 0 {
 		sand.DialMustFail--
 		return nil, vterrors.New(vtrpcpb.Code_UNAVAILABLE, "conn error")
-	}
-	if sand.DialMustTimeout > 0 {
-		time.Sleep(timeout)
-		sand.DialMustTimeout--
-		return nil, vterrors.New(vtrpcpb.Code_UNAVAILABLE, "conn unreachable")
 	}
 	sbc := sandboxconn.NewSandboxConn(tablet)
 	return sbc, nil

@@ -1,11 +1,25 @@
 #!/bin/bash
 
+# Copyright 2017 Google Inc.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # This is an example script that creates a single shard vttablet deployment.
 
 set -e
 
 cell='test'
-keyspace='test_keyspace'
+keyspace=${KEYSPACE:-'test_keyspace'}
 shard=${SHARD:-'0'}
 uid_base=${UID_BASE:-'100'}
 port_base=$[15000 + $uid_base]
@@ -29,6 +43,9 @@ dbconfig_flags="$dbconfig_dba_flags \
     -db-config-app-uname vt_app \
     -db-config-app-dbname vt_$keyspace \
     -db-config-app-charset utf8 \
+    -db-config-appdebug-uname vt_appdebug \
+    -db-config-appdebug-dbname vt_$keyspace \
+    -db-config-appdebug-charset utf8 \
     -db-config-allprivs-uname vt_allprivs \
     -db-config-allprivs-dbname vt_$keyspace \
     -db-config-allprivs-charset utf8 \
@@ -56,8 +73,8 @@ esac
 mkdir -p $VTDATAROOT/backups
 
 # Start 5 vttablets by default.
-# Pass a list of UID indices on the command line to override.
-uids=${@:-'0 1 2 3 4'}
+# Pass TABLETS_UIDS indices as env variable to change
+uids=${TABLETS_UIDS:-'0 1 2 3 4'}
 
 # Start all mysqlds in background.
 for uid_index in $uids; do
@@ -84,6 +101,13 @@ done
 # Wait for all mysqld to start up.
 wait
 
+optional_auth_args=''
+if [ "$1" = "--enable-grpc-static-auth" ];
+then
+	  echo "Enabling Auth with static authentication in grpc"
+    optional_auth_args='-grpc_auth_mode static -grpc_auth_static_password_file ./grpc_static_auth.json'
+fi
+
 # Start all vttablets in background.
 for uid_index in $uids; do
   uid=$[$uid_base + $uid_index]
@@ -97,6 +121,7 @@ for uid_index in $uids; do
   fi
 
   echo "Starting vttablet for $alias..."
+  # shellcheck disable=SC2086
   $VTROOT/bin/vttablet \
     $TOPOLOGY_FLAGS \
     -log_dir $VTDATAROOT/tmp \
@@ -116,6 +141,7 @@ for uid_index in $uids; do
     -service_map 'grpc-queryservice,grpc-tabletmanager,grpc-updatestream' \
     -pid_file $VTDATAROOT/$tablet_dir/vttablet.pid \
     -vtctld_addr http://$hostname:$vtctld_web_port/ \
+    $optional_auth_args \
     $dbconfig_flags \
     > $VTDATAROOT/$tablet_dir/vttablet.out 2>&1 &
 

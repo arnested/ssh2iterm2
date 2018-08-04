@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package throttler
 
@@ -10,16 +22,15 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/golang/glog"
-
 	"github.com/golang/protobuf/proto"
 
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/proto/throttlerdata"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo/topoproto"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	throttlerdatapb "vitess.io/vitess/go/vt/proto/throttlerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 type state string
@@ -192,7 +203,7 @@ func (m *MaxReplicationLagModule) applyLatestConfig() {
 	}
 }
 
-func (m *MaxReplicationLagModule) getConfiguration() *throttlerdata.Configuration {
+func (m *MaxReplicationLagModule) getConfiguration() *throttlerdatapb.Configuration {
 	m.mutableConfigMu.Lock()
 	defer m.mutableConfigMu.Unlock()
 
@@ -200,14 +211,14 @@ func (m *MaxReplicationLagModule) getConfiguration() *throttlerdata.Configuratio
 	return &configCopy
 }
 
-func (m *MaxReplicationLagModule) updateConfiguration(configuration *throttlerdata.Configuration, copyZeroValues bool) error {
+func (m *MaxReplicationLagModule) updateConfiguration(configuration *throttlerdatapb.Configuration, copyZeroValues bool) error {
 	m.mutableConfigMu.Lock()
 	defer m.mutableConfigMu.Unlock()
 
 	newConfig := m.mutableConfig
 
 	if copyZeroValues {
-		newConfig.Configuration = *proto.Clone(configuration).(*throttlerdata.Configuration)
+		newConfig.Configuration = *proto.Clone(configuration).(*throttlerdatapb.Configuration)
 	} else {
 		proto.Merge(&newConfig.Configuration, configuration)
 	}

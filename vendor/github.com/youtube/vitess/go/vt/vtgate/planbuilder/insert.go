@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package planbuilder
 
@@ -9,224 +21,238 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vtgate/engine"
-	"github.com/youtube/vitess/go/vt/vtgate/vindexes"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vtgate/engine"
+	"vitess.io/vitess/go/vt/vtgate/vindexes"
 )
 
 // buildInsertPlan builds the route for an INSERT statement.
-func buildInsertPlan(ins *sqlparser.Insert, vschema VSchema) (*engine.Route, error) {
-	table, err := vschema.Find(ins.Table.Qualifier, ins.Table.Name)
-	if err != nil {
+func buildInsertPlan(ins *sqlparser.Insert, vschema ContextVSchema) (*engine.Insert, error) {
+	pb := newPrimitiveBuilder(vschema, newJointab(sqlparser.GetBindvars(ins)))
+	aliased := &sqlparser.AliasedTableExpr{Expr: ins.Table}
+	if err := pb.processAliasedTable(aliased); err != nil {
 		return nil, err
 	}
+	// route is guaranteed because of simple table expr.
+	rb := pb.bldr.(*route)
+	if rb.ERoute.TargetDestination != nil {
+		return nil, errors.New("unsupported: INSERT with a target destination")
+	}
+	var table *vindexes.Table
+	for _, tval := range pb.st.tables {
+		table = tval.vindexTable
+	}
 	if !table.Keyspace.Sharded {
+		if !pb.validateSubquerySamePlan(ins) {
+			return nil, errors.New("unsupported: sharded subquery in insert values")
+		}
 		return buildInsertUnshardedPlan(ins, table, vschema)
+	}
+	if ins.Action == sqlparser.ReplaceStr {
+		return nil, errors.New("unsupported: REPLACE INTO with sharded schema")
 	}
 	return buildInsertShardedPlan(ins, table)
 }
 
-func buildInsertUnshardedPlan(ins *sqlparser.Insert, table *vindexes.Table, vschema VSchema) (*engine.Route, error) {
-	eRoute := &engine.Route{
+func buildInsertUnshardedPlan(ins *sqlparser.Insert, table *vindexes.Table, vschema ContextVSchema) (*engine.Insert, error) {
+	eins := &engine.Insert{
 		Opcode:   engine.InsertUnsharded,
 		Table:    table,
 		Keyspace: table.Keyspace,
 	}
-	var values sqlparser.Values
-	switch rows := ins.Rows.(type) {
-	case *sqlparser.Union:
-		return nil, errors.New("unsupported: union in insert")
-	case *sqlparser.Select:
-		bldr, err := processSelect(rows, vschema, nil)
-		if err != nil {
-			return nil, err
-		}
-		innerRoute, ok := bldr.(*route)
-		if !ok {
-			return nil, errors.New("unsupported: complex join in insert")
-		}
-		if innerRoute.ERoute.Keyspace.Name != eRoute.Keyspace.Name {
-			return nil, errors.New("unsupported: cross-keyspace select in insert")
-		}
-		if eRoute.Table.AutoIncrement != nil {
+	var rows sqlparser.Values
+	switch insertValues := ins.Rows.(type) {
+	case *sqlparser.Select, *sqlparser.Union:
+		if eins.Table.AutoIncrement != nil {
 			return nil, errors.New("unsupported: auto-inc and select in insert")
 		}
-		eRoute.Query = generateQuery(ins)
-		return eRoute, nil
+		eins.Query = generateQuery(ins)
+		return eins, nil
 	case sqlparser.Values:
-		values = rows
-		if hasSubquery(values) {
-			return nil, errors.New("unsupported: subquery in insert values")
-		}
+		rows = insertValues
 	default:
-		panic("unexpected construct in insert")
+		panic(fmt.Sprintf("BUG: unexpected construct in insert: %T", insertValues))
 	}
-	if eRoute.Table.AutoIncrement == nil {
-		eRoute.Query = generateQuery(ins)
-		return eRoute, nil
+	if eins.Table.AutoIncrement == nil {
+		eins.Query = generateQuery(ins)
+		return eins, nil
 	}
+
+	// Table has auto-inc and has a VALUES clause.
 	if len(ins.Columns) == 0 {
 		return nil, errors.New("column list required for tables with auto-inc columns")
 	}
-	for _, value := range values {
-		if len(ins.Columns) != len(value) {
+	for _, row := range rows {
+		if len(ins.Columns) != len(row) {
 			return nil, errors.New("column list doesn't match values")
 		}
 	}
-	autoIncValues := make([]interface{}, 0, len(values))
-	for rowNum := range values {
-		autoIncVal, err := handleAutoinc(ins, eRoute.Table.AutoIncrement, rowNum)
-		if err != nil {
-			return nil, err
-		}
-		autoIncValues = append(autoIncValues, autoIncVal)
+	if err := modifyForAutoinc(ins, eins); err != nil {
+		return nil, err
 	}
-	if eRoute.Table.AutoIncrement != nil {
-		eRoute.Generate = &engine.Generate{
-			Opcode:   engine.SelectUnsharded,
-			Keyspace: eRoute.Table.AutoIncrement.Sequence.Keyspace,
-			Query:    fmt.Sprintf("select next :n values from %s", sqlparser.String(eRoute.Table.AutoIncrement.Sequence.Name)),
-			Value:    autoIncValues,
-		}
-	}
-	eRoute.Query = generateQuery(ins)
-	return eRoute, nil
+	eins.Query = generateQuery(ins)
+	return eins, nil
 }
 
-func buildInsertShardedPlan(ins *sqlparser.Insert, table *vindexes.Table) (*engine.Route, error) {
-	eRoute := &engine.Route{
+func buildInsertShardedPlan(ins *sqlparser.Insert, table *vindexes.Table) (*engine.Insert, error) {
+	eins := &engine.Insert{
 		Opcode:   engine.InsertSharded,
 		Table:    table,
 		Keyspace: table.Keyspace,
 	}
+	if ins.Ignore != "" {
+		eins.Opcode = engine.InsertShardedIgnore
+	}
+	if ins.OnDup != nil {
+		if isVindexChanging(sqlparser.UpdateExprs(ins.OnDup), eins.Table.ColumnVindexes) {
+			return nil, errors.New("unsupported: DML cannot change vindex column")
+		}
+		eins.Opcode = engine.InsertShardedIgnore
+	}
 	if len(ins.Columns) == 0 {
 		return nil, errors.New("no column list")
 	}
-	var values sqlparser.Values
-	switch rows := ins.Rows.(type) {
+
+	directives := sqlparser.ExtractCommentDirectives(ins.Comments)
+	if directives.IsSet(DirectiveMultiShardAutocommit) {
+		eins.MultiShardAutocommit = true
+	}
+
+	var rows sqlparser.Values
+	switch insertValues := ins.Rows.(type) {
 	case *sqlparser.Select, *sqlparser.Union:
 		return nil, errors.New("unsupported: insert into select")
 	case sqlparser.Values:
-		values = rows
-		if hasSubquery(values) {
+		rows = insertValues
+		if hasSubquery(rows) {
 			return nil, errors.New("unsupported: subquery in insert values")
 		}
 	default:
-		panic("unexpected construct in insert")
+		panic(fmt.Sprintf("BUG: unexpected construct in insert: %T", insertValues))
 	}
-	for _, value := range values {
+	for _, value := range rows {
 		if len(ins.Columns) != len(value) {
 			return nil, errors.New("column list doesn't match values")
 		}
 	}
-	colVindexes := eRoute.Table.ColumnVindexes
-	routeValues := make([]interface{}, 0, len(values))
-	autoIncValues := make([]interface{}, 0, len(values))
-	for rowNum := range values {
-		rowValue := make([]interface{}, 0, len(colVindexes))
-		for _, index := range colVindexes {
-			row, pos := findOrInsertPos(ins, index.Column, rowNum)
-			value, err := handleVindexCol(index, rowNum, row, pos)
-			if err != nil {
-				return nil, err
-			}
-			rowValue = append(rowValue, value)
-		}
-		if eRoute.Table.AutoIncrement != nil {
-			autoIncVal, value, err := handleShardedAutoinc(ins, eRoute.Table.AutoIncrement, rowValue, rowNum)
-			if err != nil {
-				return nil, err
-			}
-			rowValue = value
-			autoIncValues = append(autoIncValues, autoIncVal)
-		}
-		routeValues = append(routeValues, rowValue)
-	}
-	if eRoute.Table.AutoIncrement != nil {
-		eRoute.Generate = &engine.Generate{
-			Opcode:   engine.SelectUnsharded,
-			Keyspace: eRoute.Table.AutoIncrement.Sequence.Keyspace,
-			Query:    fmt.Sprintf("select next :n values from %s", sqlparser.String(eRoute.Table.AutoIncrement.Sequence.Name)),
-			Value:    autoIncValues,
+
+	if eins.Table.AutoIncrement != nil {
+		if err := modifyForAutoinc(ins, eins); err != nil {
+			return nil, err
 		}
 	}
-	eRoute.Values = routeValues
-	eRoute.Query = generateQuery(ins)
-	generateInsertShardedQuery(ins, eRoute, values)
-	return eRoute, nil
+
+	// Fill out the 3-d Values structure. Please see documentation of Insert.Values for details.
+	routeValues := make([]sqltypes.PlanValue, len(eins.Table.ColumnVindexes))
+	for vIdx, colVindex := range eins.Table.ColumnVindexes {
+		routeValues[vIdx].Values = make([]sqltypes.PlanValue, len(colVindex.Columns))
+		for colIdx, col := range colVindex.Columns {
+			routeValues[vIdx].Values[colIdx].Values = make([]sqltypes.PlanValue, len(rows))
+			colNum := findOrAddColumn(ins, col)
+			// swap bind variables
+			baseName := ":_" + col.CompliantName()
+			for rowNum, row := range rows {
+				innerpv, err := sqlparser.NewPlanValue(row[colNum])
+				if err != nil {
+					return nil, fmt.Errorf("could not compute value for vindex or auto-inc column: %v", err)
+				}
+				routeValues[vIdx].Values[colIdx].Values[rowNum] = innerpv
+				row[colNum] = sqlparser.NewValArg([]byte(baseName + strconv.Itoa(rowNum)))
+			}
+		}
+	}
+	eins.VindexValues = routeValues
+	eins.Query = generateQuery(ins)
+	generateInsertShardedQuery(ins, eins, rows)
+	return eins, nil
 }
 
-func generateInsertShardedQuery(node *sqlparser.Insert, eRoute *engine.Route, valueTuples sqlparser.Values) {
+func generateInsertShardedQuery(node *sqlparser.Insert, eins *engine.Insert, valueTuples sqlparser.Values) {
 	prefixBuf := sqlparser.NewTrackedBuffer(dmlFormatter)
 	midBuf := sqlparser.NewTrackedBuffer(dmlFormatter)
 	suffixBuf := sqlparser.NewTrackedBuffer(dmlFormatter)
-	eRoute.Mid = make([]string, len(valueTuples))
+	eins.Mid = make([]string, len(valueTuples))
 	prefixBuf.Myprintf("insert %v%sinto %v%v values ",
 		node.Comments, node.Ignore,
 		node.Table, node.Columns)
-	eRoute.Prefix = prefixBuf.String()
+	eins.Prefix = prefixBuf.String()
 	for rowNum, val := range valueTuples {
 		midBuf.Myprintf("%v", val)
-		eRoute.Mid[rowNum] = midBuf.String()
+		eins.Mid[rowNum] = midBuf.String()
 		midBuf.Truncate(0)
 	}
 	suffixBuf.Myprintf("%v", node.OnDup)
-	eRoute.Suffix = suffixBuf.String()
+	eins.Suffix = suffixBuf.String()
 }
 
-// handleVindexCol substitutes the insert value with a bind var name and returns
-// the converted value, which will be used at the time of insert to validate the vindex value.
-func handleVindexCol(colVindex *vindexes.ColumnVindex, rowNum int, row sqlparser.ValTuple, pos int) (interface{}, error) {
-	val, err := valConvert(row[pos])
+// modifyForAutoinc modfies the AST and the plan to generate
+// necessary autoinc values. It must be called only if eins.Table.AutoIncrement
+// is set.
+func modifyForAutoinc(ins *sqlparser.Insert, eins *engine.Insert) error {
+	pos := findOrAddColumn(ins, eins.Table.AutoIncrement.Column)
+	autoIncValues, err := swapBindVariables(ins.Rows.(sqlparser.Values), pos, ":"+engine.SeqVarName)
 	if err != nil {
-		return val, fmt.Errorf("could not convert val: %s, pos: %d: %v", sqlparser.String(row[pos]), pos, err)
+		return err
 	}
-	row[pos] = sqlparser.NewValArg([]byte(":_" + colVindex.Column.CompliantName() + strconv.Itoa(rowNum)))
-	return val, nil
+	eins.Generate = &engine.Generate{
+		Keyspace: eins.Table.AutoIncrement.Sequence.Keyspace,
+		Query:    fmt.Sprintf("select next :n values from %s", sqlparser.String(eins.Table.AutoIncrement.Sequence.Name)),
+		Values:   autoIncValues,
+	}
+	return nil
 }
 
-// handleShardedAutoinc substitutes the insert value with a bind var and returns
-// the converted value, which will be used at the time of decide if a new value should be generated.
-// This is for a sharded keyspace which also needs to take care of an additional redirect.
-func handleShardedAutoinc(ins *sqlparser.Insert, autoinc *vindexes.AutoIncrement, rowValue []interface{}, rowNum int) (interface{}, []interface{}, error) {
-	// If it's also a colvindex, we have to add a redirect from route.Values.
-	// Otherwise, we have to redirect from row[pos].
-	if autoinc.ColumnVindexNum >= 0 {
-		val := rowValue[autoinc.ColumnVindexNum]
-		rowValue[autoinc.ColumnVindexNum] = ":" + engine.SeqVarName + strconv.Itoa(rowNum)
-		return val, rowValue, nil
+// swapBindVariables swaps in bind variable names at the the specified
+// column position in the AST values and returns the converted values back.
+// Bind variable names are generated using baseName.
+func swapBindVariables(rows sqlparser.Values, colNum int, baseName string) (sqltypes.PlanValue, error) {
+	pv := sqltypes.PlanValue{}
+	for rowNum, row := range rows {
+		innerpv, err := sqlparser.NewPlanValue(row[colNum])
+		if err != nil {
+			return pv, fmt.Errorf("could not compute value for vindex or auto-inc column: %v", err)
+		}
+		pv.Values = append(pv.Values, innerpv)
+		row[colNum] = sqlparser.NewValArg([]byte(baseName + strconv.Itoa(rowNum)))
 	}
-	val, err := handleAutoinc(ins, autoinc, rowNum)
-	return val, rowValue, err
+	return pv, nil
 }
 
-// handleAutoinc substitutes the insert value with a bind var and returns
-// the converted value, which will be used at the time of decide if a new value should be generated.
-// This works for columns with no vindexes.
-func handleAutoinc(ins *sqlparser.Insert, autoinc *vindexes.AutoIncrement, rowNum int) (interface{}, error) {
-	row, pos := findOrInsertPos(ins, autoinc.Column, rowNum)
-	val, err := valConvert(row[pos])
-	if err != nil {
-		return nil, fmt.Errorf("could not convert val: %s, pos: %d: %v", sqlparser.String(row[pos]), pos, err)
-	}
-	row[pos] = sqlparser.NewValArg([]byte(":" + engine.SeqVarName + strconv.Itoa(rowNum)))
-	return val, nil
-}
-
-func findOrInsertPos(ins *sqlparser.Insert, col sqlparser.ColIdent, rowNum int) (row sqlparser.ValTuple, pos int) {
-	pos = -1
+// findOrAddColumn finds the position of a column in the insert. If it's
+// absent it appends it to the with NULL values and returns that position.
+func findOrAddColumn(ins *sqlparser.Insert, col sqlparser.ColIdent) int {
 	for i, column := range ins.Columns {
 		if col.Equal(column) {
-			pos = i
-			break
+			return i
 		}
 	}
-	if pos == -1 {
-		pos = len(ins.Columns)
-		ins.Columns = append(ins.Columns, col)
+	ins.Columns = append(ins.Columns, col)
+	rows := ins.Rows.(sqlparser.Values)
+	for i := range rows {
+		rows[i] = append(rows[i], &sqlparser.NullVal{})
 	}
-	if pos >= len(ins.Rows.(sqlparser.Values)[rowNum]) {
-		ins.Rows.(sqlparser.Values)[rowNum] = append(ins.Rows.(sqlparser.Values)[rowNum], &sqlparser.NullVal{})
+	return len(ins.Columns) - 1
+}
+
+// isVindexChanging returns true if any of the update
+// expressions modify a vindex column.
+func isVindexChanging(setClauses sqlparser.UpdateExprs, colVindexes []*vindexes.ColumnVindex) bool {
+	for _, assignment := range setClauses {
+		for _, vcol := range colVindexes {
+			for _, col := range vcol.Columns {
+				if col.Equal(assignment.Name.Name) {
+					valueExpr, isValuesFuncExpr := assignment.Expr.(*sqlparser.ValuesFuncExpr)
+					if !isValuesFuncExpr {
+						return true
+					}
+					// update on duplicate key is changing the vindex column, not supported.
+					if !valueExpr.Name.Name.Equal(assignment.Name.Name) {
+						return true
+					}
+				}
+			}
+		}
 	}
-	return ins.Rows.(sqlparser.Values)[rowNum], pos
+	return false
 }

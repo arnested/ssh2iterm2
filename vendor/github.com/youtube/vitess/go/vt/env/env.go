@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package env
 
 import (
@@ -55,6 +71,22 @@ func VtMysqlRoot() (string, error) {
 	root, err := VtRoot()
 	if err != nil {
 		return "", errors.New("VT_MYSQL_ROOT is not set and could not be guessed from the executable location. Please set $VT_MYSQL_ROOT.")
+	}
+	return root, nil
+}
+
+// VtMysqlBaseDir returns the Mysql base directory, which
+// contains the fill_help_tables.sql script for instance
+func VtMysqlBaseDir() (string, error) {
+	// if the environment variable is set, use that
+	if root := os.Getenv("VT_MYSQL_BASEDIR"); root != "" {
+		return root, nil
+	}
+
+	// otherwise let's use VtMysqlRoot
+	root, err := VtMysqlRoot()
+	if err != nil {
+		return "", errors.New("VT_MYSQL_BASEDIR is not set. Please set $VT_MYSQL_BASEDIR.")
 	}
 	return root, nil
 }

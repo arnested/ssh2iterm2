@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tmutils
 
@@ -11,9 +23,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/youtube/vitess/go/vt/concurrency"
+	"github.com/golang/protobuf/proto"
+	"vitess.io/vitess/go/vt/concurrency"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
 )
 
 // This file contains helper methods to deal with Schema information.
@@ -203,11 +216,11 @@ func DiffSchema(leftName string, left *tabletmanagerdatapb.SchemaDefinition, rig
 		return
 	}
 	if left == nil || right == nil {
-		er.RecordError(fmt.Errorf("%v and %v are different, %s: %v, %s: %v", leftName, rightName, leftName, left, rightName, right))
+		er.RecordError(fmt.Errorf("schemas are different:\n%s: %v, %s: %v", leftName, left, rightName, right))
 		return
 	}
 	if left.DatabaseSchema != right.DatabaseSchema {
-		er.RecordError(fmt.Errorf("%v and %v don't agree on database creation command:\n%v\n differs from:\n%v", leftName, rightName, left.DatabaseSchema, right.DatabaseSchema))
+		er.RecordError(fmt.Errorf("schemas are different:\n%s: %v\n differs from:\n%s: %v", leftName, left.DatabaseSchema, rightName, right.DatabaseSchema))
 	}
 
 	leftIndex := 0
@@ -229,11 +242,11 @@ func DiffSchema(leftName string, left *tabletmanagerdatapb.SchemaDefinition, rig
 
 		// same name, let's see content
 		if left.TableDefinitions[leftIndex].Schema != right.TableDefinitions[rightIndex].Schema {
-			er.RecordError(fmt.Errorf("%v and %v disagree on schema for table %v:\n%v\n differs from:\n%v", leftName, rightName, left.TableDefinitions[leftIndex].Name, left.TableDefinitions[leftIndex].Schema, right.TableDefinitions[rightIndex].Schema))
+			er.RecordError(fmt.Errorf("schemas differ on table %v:\n%s: %v\n differs from:\n%s: %v", left.TableDefinitions[leftIndex].Name, leftName, left.TableDefinitions[leftIndex].Schema, rightName, right.TableDefinitions[rightIndex].Schema))
 		}
 
 		if left.TableDefinitions[leftIndex].Type != right.TableDefinitions[rightIndex].Type {
-			er.RecordError(fmt.Errorf("%v and %v disagree on table type for table %v:\n%v\n differs from:\n%v", leftName, rightName, left.TableDefinitions[leftIndex].Name, left.TableDefinitions[leftIndex].Type, right.TableDefinitions[rightIndex].Type))
+			er.RecordError(fmt.Errorf("schemas differ on table type for table %v:\n%s: %v\n differs from:\n%s: %v", left.TableDefinitions[leftIndex].Name, leftName, left.TableDefinitions[leftIndex].Type, rightName, right.TableDefinitions[rightIndex].Type))
 		}
 
 		leftIndex++
@@ -278,4 +291,13 @@ type SchemaChange struct {
 	AllowReplication bool
 	BeforeSchema     *tabletmanagerdatapb.SchemaDefinition
 	AfterSchema      *tabletmanagerdatapb.SchemaDefinition
+}
+
+// Equal compares two SchemaChange objects.
+func (s *SchemaChange) Equal(s2 *SchemaChange) bool {
+	return s.SQL == s2.SQL &&
+		s.Force == s2.Force &&
+		s.AllowReplication == s2.AllowReplication &&
+		proto.Equal(s.BeforeSchema, s2.BeforeSchema) &&
+		proto.Equal(s.AfterSchema, s2.AfterSchema)
 }

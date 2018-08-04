@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 // Package cephbackupstorage implements the BackupStorage interface
 // for Ceph Cloud Storage.
 package cephbackupstorage
@@ -14,12 +30,12 @@ import (
 
 	"errors"
 
-	log "github.com/golang/glog"
 	minio "github.com/minio/minio-go"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/mysqlctl/backupstorage"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/mysqlctl/backupstorage"
 )
 
 var (
@@ -57,7 +73,7 @@ func (bh *CephBackupHandle) Name() string {
 }
 
 // AddFile implements BackupHandle.
-func (bh *CephBackupHandle) AddFile(ctx context.Context, filename string) (io.WriteCloser, error) {
+func (bh *CephBackupHandle) AddFile(ctx context.Context, filename string, filesize int64) (io.WriteCloser, error) {
 	if bh.readOnly {
 		return nil, fmt.Errorf("AddFile cannot be called on read-only backup")
 	}

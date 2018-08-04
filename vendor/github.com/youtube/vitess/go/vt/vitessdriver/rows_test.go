@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package vitessdriver
 
 import (
@@ -6,8 +22,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
+	"vitess.io/vitess/go/sqltypes"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 var rowsResult1 = sqltypes.Result{
@@ -39,18 +55,18 @@ var rowsResult1 = sqltypes.Result{
 	InsertID:     0,
 	Rows: [][]sqltypes.Value{
 		{
-			sqltypes.MakeTrusted(sqltypes.Int32, []byte("1")),
-			sqltypes.MakeTrusted(sqltypes.Float32, []byte("1.1")),
-			sqltypes.MakeTrusted(sqltypes.VarChar, []byte("value1")),
-			sqltypes.MakeTrusted(sqltypes.Uint32, []byte("2147483647")),          // 2^31-1, NOT out of range for int32 => should become int64
-			sqltypes.MakeTrusted(sqltypes.Uint64, []byte("9223372036854775807")), // 2^63-1, NOT out of range for int64
+			sqltypes.NewInt32(1),
+			sqltypes.TestValue(sqltypes.Float32, "1.1"),
+			sqltypes.NewVarChar("value1"),
+			sqltypes.TestValue(sqltypes.Uint32, "2147483647"), // 2^31-1, NOT out of range for int32 => should become int64
+			sqltypes.NewUint64(9223372036854775807),           // 2^63-1, NOT out of range for int64
 		},
 		{
-			sqltypes.MakeTrusted(sqltypes.Int32, []byte("2")),
-			sqltypes.MakeTrusted(sqltypes.Float32, []byte("2.2")),
-			sqltypes.MakeTrusted(sqltypes.VarChar, []byte("value2")),
-			sqltypes.MakeTrusted(sqltypes.Uint32, []byte("4294967295")),           // 2^32, out of range for int32 => should become int64
-			sqltypes.MakeTrusted(sqltypes.Uint64, []byte("18446744073709551615")), // 2^64, out of range for int64
+			sqltypes.NewInt32(2),
+			sqltypes.TestValue(sqltypes.Float32, "2.2"),
+			sqltypes.NewVarChar("value2"),
+			sqltypes.TestValue(sqltypes.Uint32, "4294967295"), // 2^32-1, out of range for int32 => should become int64
+			sqltypes.NewUint64(18446744073709551615),          // 2^64-1, out of range for int64
 		},
 	},
 }
@@ -68,7 +84,7 @@ func logMismatchedTypes(t *testing.T, gotRow, wantRow []driver.Value) {
 }
 
 func TestRows(t *testing.T) {
-	ri := newRows(&rowsResult1)
+	ri := newRows(&rowsResult1, &converter{})
 	wantCols := []string{
 		"field1",
 		"field2",

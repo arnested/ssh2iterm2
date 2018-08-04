@@ -1,28 +1,40 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.jdbc;
 
-import io.vitess.client.Context;
-import io.vitess.client.Proto;
-import io.vitess.client.VTGateConn;
-import io.vitess.client.VTGateTx;
-import io.vitess.client.cursor.Cursor;
-import io.vitess.client.cursor.CursorWithError;
-import io.vitess.proto.Query;
-import io.vitess.proto.Topodata;
-import io.vitess.proto.Vtrpc;
-import io.vitess.util.Constants;
-import io.vitess.util.StringUtils;
 import java.sql.BatchUpdateException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import java.sql.SQLNonTransientException;
-import java.sql.SQLRecoverableException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Logger;
+
+import io.vitess.client.Context;
+import io.vitess.client.Proto;
+import io.vitess.client.VTGateConnection;
+import io.vitess.client.cursor.Cursor;
+import io.vitess.client.cursor.CursorWithError;
+import io.vitess.proto.Query;
+import io.vitess.proto.Vtrpc;
+import io.vitess.util.Constants;
+import io.vitess.util.StringUtils;
 
 /**
  * Created by harshit.gangal on 19/01/16.
@@ -35,14 +47,14 @@ import java.util.logging.Logger;
  * no reference of the query/queries provided is/are kept.
  */
 public class VitessStatement implements Statement {
-
+    protected static final String[] ON_DUPLICATE_KEY_UPDATE_CLAUSE = new String[] { "ON", "DUPLICATE", "KEY", "UPDATE" };
     /* Get actual class name to be printed on */
     private static Logger logger = Logger.getLogger(VitessStatement.class.getName());
     protected VitessResultSet vitessResultSet;
     protected VitessConnection vitessConnection;
     protected boolean closed;
     protected long resultCount;
-    protected long queryTimeoutInMillis = Constants.DEFAULT_TIMEOUT;
+    protected long queryTimeoutInMillis;
     protected int maxFieldSize = Constants.MAX_BUFFER_SIZE;
     protected int maxRows = 0;
     protected int fetchSize = 0;
@@ -50,6 +62,7 @@ public class VitessStatement implements Statement {
     protected int resultSetType;
     protected boolean retrieveGeneratedKeys = false;
     protected long generatedId = -1;
+    protected long[][] batchGeneratedKeys;
     /**
      * Holds batched commands
      */
@@ -63,6 +76,7 @@ public class VitessStatement implements Statement {
     public VitessStatement(VitessConnection vitessConnection, int resultSetType,
         int resultSetConcurrency) {
         this.vitessConnection = vitessConnection;
+        this.queryTimeoutInMillis = vitessConnection.getTimeout();
         this.vitessResultSet = null;
         this.resultSetType = resultSetType;
         this.resultSetConcurrency = resultSetConcurrency;
@@ -70,6 +84,7 @@ public class VitessStatement implements Statement {
         this.resultCount = -1;
         this.vitessConnection.registerStatement(this);
         this.batchedArgs = new ArrayList<>();
+        this.batchGeneratedKeys = null;
     }
 
     /**
@@ -80,10 +95,8 @@ public class VitessStatement implements Statement {
      * @throws SQLException
      */
     public ResultSet executeQuery(String sql) throws SQLException {
-        VTGateConn vtGateConn;
-        Topodata.TabletType tabletType;
+        VTGateConnection vtGateConn;
         Cursor cursor;
-        boolean showSql;
 
         checkOpen();
         checkSQLNullOrEmpty(sql);
@@ -98,46 +111,24 @@ public class VitessStatement implements Statement {
         this.generatedId = -1;
 
         vtGateConn = this.vitessConnection.getVtGateConn();
-        tabletType = this.vitessConnection.getTabletType();
 
-        showSql = StringUtils.startsWithIgnoreCaseAndWs(sql, Constants.SQL_SHOW);
-        try {
-            if (showSql) {
-                cursor = this.executeShow(sql);
-            } else {
-                if (tabletType != Topodata.TabletType.MASTER || this.vitessConnection
-                    .getAutoCommit()) {
-                    Context context =
-                        this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                    if (vitessConnection.isSimpleExecute()) {
-                        cursor = vtGateConn.execute(context, sql, null, tabletType, vitessConnection.getIncludedFields()).checkedGet();
-                    } else {
-                        cursor = vtGateConn.streamExecute(context, sql, null, tabletType, vitessConnection.getIncludedFields());
-                    }
-                } else {
-                    VTGateTx vtGateTx = this.vitessConnection.getVtGateTx();
-                    if (null == vtGateTx) {
-                        Context context =
-                            this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                        vtGateTx = vtGateConn.begin(context).checkedGet();
-                        this.vitessConnection.setVtGateTx(vtGateTx);
-                    }
-                    Context context =
-                        this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                /* Stream query is not suppose to run in a txn. */
-                    cursor = vtGateTx.execute(context, sql, null, tabletType, vitessConnection.getIncludedFields()).checkedGet();
-                }
-            }
-
-            if (null == cursor) {
-                throw new SQLException(Constants.SQLExceptionMessages.METHOD_CALL_FAILED);
-            }
-            this.vitessResultSet = new VitessResultSet(cursor, this);
-        } catch (SQLRecoverableException ex) {
-            this.vitessConnection.setVtGateTx(null);
-            throw ex;
+        if ((vitessConnection.isSimpleExecute() && this.fetchSize == 0) || vitessConnection.isInTransaction()) {
+            checkAndBeginTransaction();
+            Context context =
+                    this.vitessConnection.createContext(this.queryTimeoutInMillis);
+            cursor = vtGateConn.execute(context, sql, null, vitessConnection.getVtSession()).checkedGet();
+        } else {
+            /* Stream query is not suppose to run in a txn. */
+            Context context =
+                    this.vitessConnection.createContext(this.queryTimeoutInMillis);
+            cursor = vtGateConn.streamExecute(context, sql, null, vitessConnection.getVtSession());
         }
-        return (this.vitessResultSet);
+
+        if (null == cursor) {
+            throw new SQLException(Constants.SQLExceptionMessages.METHOD_CALL_FAILED);
+        }
+        this.vitessResultSet = new VitessResultSet(cursor, this);
+        return this.vitessResultSet;
     }
 
     /**
@@ -258,7 +249,7 @@ public class VitessStatement implements Statement {
                 Constants.SQLExceptionMessages.ILLEGAL_VALUE_FOR + "query timeout");
         }
         this.queryTimeoutInMillis =
-            (0 == seconds) ? Constants.DEFAULT_TIMEOUT : (long) seconds * 1000;
+            (0 == seconds) ? vitessConnection.getTimeout() : (long) seconds * 1000;
     }
 
     /**
@@ -383,8 +374,22 @@ public class VitessStatement implements Statement {
             for (int i = 0; i < this.resultCount; ++i) {
                 data[i][0] = String.valueOf(this.generatedId + i);
             }
+        } else if (this.batchGeneratedKeys != null) {
+            long totalAffected = 0;
+            for (int i = 0; i < this.batchGeneratedKeys.length; i++) {
+                long rowsAffected = this.batchGeneratedKeys[i][1];
+                totalAffected += rowsAffected;
+            }
+            data = new String[(int) totalAffected][1];
+            int idx = 0;
+            for (int i = 0; i < this.batchGeneratedKeys.length; i++) {
+                long insertId = this.batchGeneratedKeys[i][0];
+                long rowsAffected = this.batchGeneratedKeys[i][1];
+                for (int j = 0; j < rowsAffected; j++) {
+                    data[idx++][0] = String.valueOf(insertId + j);
+                }
+            }
         }
-
         return new VitessResultSet(columnNames, columnTypes, data, this.vitessConnection);
     }
 
@@ -397,13 +402,12 @@ public class VitessStatement implements Statement {
      * @throws SQLException
      */
     public int executeUpdate(String sql, int autoGeneratedKeys) throws SQLException {
-        VTGateConn vtGateConn;
-        Topodata.TabletType tabletType;
-        VTGateTx vtGateTx;
+        VTGateConnection vtGateConn;
         Cursor cursor;
         int truncatedUpdateCount;
 
         checkOpen();
+        checkNotReadOnly();
         checkSQLNullOrEmpty(sql);
         closeOpenResultSetAndResetCount();
 
@@ -412,56 +416,35 @@ public class VitessStatement implements Statement {
         }
 
         vtGateConn = this.vitessConnection.getVtGateConn();
-        tabletType = this.vitessConnection.getTabletType();
 
-        if (tabletType != Topodata.TabletType.MASTER) {
-            throw new SQLException(Constants.SQLExceptionMessages.DML_NOT_ON_MASTER);
+        checkAndBeginTransaction();
+        Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
+        cursor = vtGateConn.execute(context, sql, null, vitessConnection.getVtSession()).checkedGet();
+
+        if (null == cursor) {
+            throw new SQLException(Constants.SQLExceptionMessages.METHOD_CALL_FAILED);
         }
 
-        try {
-            if (this.vitessConnection.getAutoCommit()) {
-                Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                cursor = vtGateConn.execute(context, sql, null, tabletType, vitessConnection.getIncludedFields()).checkedGet();
-            } else {
-                vtGateTx = this.vitessConnection.getVtGateTx();
-                if (null == vtGateTx) {
-                    Context context =
-                        this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                    vtGateTx = vtGateConn.begin(context).checkedGet();
-                    this.vitessConnection.setVtGateTx(vtGateTx);
-                }
-
-                Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                cursor = vtGateTx.execute(context, sql, null, tabletType, vitessConnection.getIncludedFields()).checkedGet();
-            }
-
-            if (null == cursor) {
-                throw new SQLException(Constants.SQLExceptionMessages.METHOD_CALL_FAILED);
-            }
-
-            if (!(null == cursor.getFields() || cursor.getFields().isEmpty())) {
-                throw new SQLException(Constants.SQLExceptionMessages.SQL_RETURNED_RESULT_SET);
-            }
-
-            if (autoGeneratedKeys == Statement.RETURN_GENERATED_KEYS) {
-                this.retrieveGeneratedKeys = true;
-                this.generatedId = cursor.getInsertId();
-            } else {
-                this.retrieveGeneratedKeys = false;
-                this.generatedId = -1;
-            }
-
-            this.resultCount = cursor.getRowsAffected();
-
-            if (this.resultCount > Integer.MAX_VALUE) {
-                truncatedUpdateCount = Integer.MAX_VALUE;
-            } else {
-                truncatedUpdateCount = (int) this.resultCount;
-            }
-        } catch (SQLRecoverableException ex) {
-            this.vitessConnection.setVtGateTx(null);
-            throw ex;
+        if (!(null == cursor.getFields() || cursor.getFields().isEmpty())) {
+            throw new SQLException(Constants.SQLExceptionMessages.SQL_RETURNED_RESULT_SET);
         }
+
+        if (autoGeneratedKeys == Statement.RETURN_GENERATED_KEYS) {
+            this.retrieveGeneratedKeys = true;
+            this.generatedId = cursor.getInsertId();
+        } else {
+            this.retrieveGeneratedKeys = false;
+            this.generatedId = -1;
+        }
+
+        this.resultCount = cursor.getRowsAffected();
+
+        if (this.resultCount > Integer.MAX_VALUE) {
+            truncatedUpdateCount = Integer.MAX_VALUE;
+        } else {
+            truncatedUpdateCount = (int) this.resultCount;
+        }
+
         return truncatedUpdateCount;
     }
 
@@ -476,9 +459,7 @@ public class VitessStatement implements Statement {
      * @throws SQLException
      */
     public boolean execute(String sql, int autoGeneratedKeys) throws SQLException {
-        Cursor cursor;
-        boolean selectSql;
-        boolean showSql;
+        boolean selectOrShowSql;
 
         checkOpen();
         checkSQLNullOrEmpty(sql);
@@ -488,17 +469,9 @@ public class VitessStatement implements Statement {
             throw new SQLException(Constants.SQLExceptionMessages.METHOD_NOT_ALLOWED);
         }
 
-        selectSql = StringUtils.startsWithIgnoreCaseAndWs(sql, Constants.SQL_SELECT);
-        showSql = StringUtils.startsWithIgnoreCaseAndWs(sql, Constants.SQL_SHOW);
+        selectOrShowSql = StringUtils.startsWithIgnoreCaseAndWs(sql, Constants.SQL_S);
 
-        if (showSql) {
-            cursor = this.executeShow(sql);
-            if (!(null == cursor || null == cursor.getFields() || cursor.getFields().isEmpty())) {
-                this.vitessResultSet = new VitessResultSet(cursor, this);
-                return true;
-            }
-            throw new SQLException(Constants.SQLExceptionMessages.METHOD_CALL_FAILED);
-        } else if (selectSql) {
+        if (selectOrShowSql) {
             this.executeQuery(sql);
             return true;
         } else {
@@ -549,9 +522,8 @@ public class VitessStatement implements Statement {
      */
     public int[] executeBatch() throws SQLException {
         checkOpen();
-        VTGateConn vtGateConn;
-        Topodata.TabletType tabletType;
-        VTGateTx vtGateTx;
+        checkNotReadOnly();
+        VTGateConnection vtGateConn;
         List<CursorWithError> cursorWithErrorList;
 
         if(0 == batchedArgs.size()) {
@@ -560,37 +532,18 @@ public class VitessStatement implements Statement {
 
         try {
             vtGateConn = this.vitessConnection.getVtGateConn();
-            tabletType = this.vitessConnection.getTabletType();
 
-            if (tabletType != Topodata.TabletType.MASTER) {
-                throw new SQLException(Constants.SQLExceptionMessages.DML_NOT_ON_MASTER);
-            }
-
-            if (this.vitessConnection.getAutoCommit()) {
-                Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                cursorWithErrorList =
-                    vtGateConn.executeBatch(context, batchedArgs, null, tabletType, vitessConnection.getIncludedFields()).checkedGet();
-            } else {
-                vtGateTx = this.vitessConnection.getVtGateTx();
-                if (null == vtGateTx) {
-                    Context context =
-                        this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                    vtGateTx = vtGateConn.begin(context).checkedGet();
-                    this.vitessConnection.setVtGateTx(vtGateTx);
-                }
-
-                Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
-                cursorWithErrorList =
-                    vtGateTx.executeBatch(context, batchedArgs, null, tabletType, vitessConnection.getIncludedFields()).checkedGet();
-            }
+            checkAndBeginTransaction();
+            Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
+            cursorWithErrorList =
+                    vtGateConn.executeBatch(context, batchedArgs, null, vitessConnection.getVtSession()).checkedGet();
 
             if (null == cursorWithErrorList) {
                 throw new SQLException(Constants.SQLExceptionMessages.METHOD_CALL_FAILED);
             }
 
-            //TODO(harshit): To Support AutoGenerated Keys in a Batch
-
-            return this.generateBatchUpdateResult(cursorWithErrorList);
+            this.retrieveGeneratedKeys = true;// mimicking mysql-connector-j
+            return this.generateBatchUpdateResult(cursorWithErrorList, batchedArgs);
         } finally {
             this.clearBatch();
         }
@@ -618,30 +571,16 @@ public class VitessStatement implements Statement {
         }
     }
 
+    protected void checkNotReadOnly() throws SQLException {
+        if (vitessConnection.isReadOnly()) {
+            throw new SQLException(Constants.SQLExceptionMessages.READ_ONLY);
+        }
+    }
+
     protected void checkSQLNullOrEmpty(String sql) throws SQLException {
         if (StringUtils.isNullOrEmptyWithoutWS(sql)) {
             throw new SQLException(Constants.SQLExceptionMessages.SQL_EMPTY);
         }
-    }
-
-    /**
-     * This method will execute Show Queries
-     *
-     * @param sql - Sql as input parameter
-     * @return Cursor
-     * @throws SQLException
-     */
-    protected Cursor executeShow(String sql) throws SQLException {
-        String keyspace = this.vitessConnection.getKeyspace();
-        if (null == keyspace) {
-            throw new SQLNonTransientException(Constants.SQLExceptionMessages.NO_KEYSPACE);
-        }
-        //To Hit any single shard
-        List<byte[]> keyspaceIds = Arrays.asList(new byte[] {1});
-        Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
-        return this.vitessConnection.getVtGateConn()
-            .executeKeyspaceIds(context, sql, keyspace, keyspaceIds, null,
-                this.vitessConnection.getTabletType(), vitessConnection.getIncludedFields()).checkedGet();
     }
 
     /**
@@ -650,30 +589,56 @@ public class VitessStatement implements Statement {
      * It throws a BatchUpdateException.
      *
      * @param cursorWithErrorList Consists list of Cursor and Error object.
+     * @param batchedArgs holds batched commands
      * @return int[] of results corresponding to each query
      * @throws BatchUpdateException
      */
-    protected int[] generateBatchUpdateResult(List<CursorWithError> cursorWithErrorList)
+    protected int[] generateBatchUpdateResult(List<CursorWithError> cursorWithErrorList, List<String> batchedArgs)
         throws BatchUpdateException {
         int[] updateCounts = new int[cursorWithErrorList.size()];
-        int i = 0;
+        long[][] generatedKeys = new long[cursorWithErrorList.size()][2];
 
         Vtrpc.RPCError rpcError = null;
-        for (CursorWithError cursorWithError : cursorWithErrorList) {
+        String batchCommand = null;
+        CursorWithError cursorWithError = null;
+        for (int i = 0; i < cursorWithErrorList.size(); i++) {
+            cursorWithError = cursorWithErrorList.get(i);
+            batchCommand = batchedArgs.get(i);
             if (null == cursorWithError.getError()) {
                 try {
-                    updateCounts[i] = (int) cursorWithError.getCursor().getRowsAffected();
+                    long rowsAffected = cursorWithError.getCursor().getRowsAffected();
+                    int truncatedUpdateCount;
+                    if (rowsAffected > Integer.MAX_VALUE) {
+                        truncatedUpdateCount = Integer.MAX_VALUE;
+                    } else {
+                        if (sqlIsUpsert(batchCommand)) {
+                            // mimicking mysql-connector-j here.
+                            // but it would fail for: insert into t1 values ('a'), ('b') on duplicate key update ts = now();
+                            truncatedUpdateCount = 1;
+                        } else {
+                            truncatedUpdateCount = (int) rowsAffected;
+                        }
+                    }
+                    updateCounts[i] = truncatedUpdateCount;
+                    if (this.retrieveGeneratedKeys) {
+                        generatedKeys[i] = new long[]{cursorWithError.getCursor().getInsertId(), truncatedUpdateCount};
+                    }
                 } catch (SQLException ex) {
                         /* This case should not happen as API has returned cursor and not error.
                          * Handling by Statement.SUCCESS_NO_INFO
                          */
                     updateCounts[i] = Statement.SUCCESS_NO_INFO;
+                    if (this.retrieveGeneratedKeys) {
+                        generatedKeys[i] = new long[]{Statement.SUCCESS_NO_INFO, Statement.SUCCESS_NO_INFO};
+                    }
                 }
             } else {
                 rpcError = cursorWithError.getError();
                 updateCounts[i] = Statement.EXECUTE_FAILED;
+                if (this.retrieveGeneratedKeys) {
+                    generatedKeys[i] = new long[]{Statement.EXECUTE_FAILED, Statement.EXECUTE_FAILED};
+                }
             }
-            ++i;
         }
 
         if (null != rpcError) {
@@ -681,7 +646,22 @@ public class VitessStatement implements Statement {
             String sqlState = Proto.getSQLState(rpcError.getMessage());
             throw new BatchUpdateException(rpcError.toString(), sqlState, errno, updateCounts);
         }
+        if (this.retrieveGeneratedKeys) {
+            this.batchGeneratedKeys = generatedKeys;
+        }
         return updateCounts;
+    }
+
+    private boolean sqlIsUpsert(String sql) {
+        return StringUtils.indexOfIgnoreCase(0, sql, ON_DUPLICATE_KEY_UPDATE_CLAUSE, "\"'`", "\"'`", StringUtils.SEARCH_MODE__ALL) != -1;
+    }
+
+    protected void checkAndBeginTransaction() throws SQLException {
+        if (!(this.vitessConnection.getAutoCommit() || this.vitessConnection.isInTransaction())) {
+            Context context = this.vitessConnection.createContext(this.queryTimeoutInMillis);
+            VTGateConnection vtGateConn = this.vitessConnection.getVtGateConn();
+            Cursor cursor = vtGateConn.execute(context,"begin",null,this.vitessConnection.getVtSession()).checkedGet();
+        }
     }
 
     //Unsupported Methods

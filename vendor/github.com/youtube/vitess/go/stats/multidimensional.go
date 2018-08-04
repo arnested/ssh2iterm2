@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package stats
 
 import (
@@ -18,19 +34,21 @@ type MultiTracker interface {
 func CounterForDimension(mt MultiTracker, dimension string) CountTracker {
 	for i, lab := range mt.Labels() {
 		if lab == dimension {
-			return CountersFunc(func() map[string]int64 {
-				result := make(map[string]int64)
-				for k, v := range mt.Counts() {
-					if k == "All" {
-						result[k] = v
-						continue
+			return wrappedCountTracker{
+				f: func() map[string]int64 {
+					result := make(map[string]int64)
+					for k, v := range mt.Counts() {
+						if k == "All" {
+							result[k] = v
+							continue
+						}
+						result[strings.Split(k, ".")[i]] += v
 					}
-					result[strings.Split(k, ".")[i]] += v
-				}
-				return result
-			})
+					return result
+				},
+			}
 		}
 	}
-	panic(fmt.Sprintf("label %v is not one of %v", dimension, mt.Labels))
 
+	panic(fmt.Sprintf("label %v is not one of %v", dimension, mt.Labels()))
 }

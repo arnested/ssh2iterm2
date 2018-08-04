@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package cache implements a LRU cache.
 //
@@ -25,16 +37,13 @@ import (
 type LRUCache struct {
 	mu sync.Mutex
 
-	// list & table of *entry objects
+	// list & table contain *entry objects.
 	list  *list.List
 	table map[string]*list.Element
 
-	// Our current size. Obviously a gross simplification and
-	// low-grade approximation.
-	size int64
-
-	// How much we are limiting the cache to.
-	capacity int64
+	size      int64
+	capacity  int64
+	evictions int64
 }
 
 // Value is the interface values that go into LRUCache need to satisfy
@@ -155,13 +164,13 @@ func (lru *LRUCache) SetCapacity(capacity int64) {
 }
 
 // Stats returns a few stats on the cache.
-func (lru *LRUCache) Stats() (length, size, capacity int64, oldest time.Time) {
+func (lru *LRUCache) Stats() (length, size, capacity, evictions int64, oldest time.Time) {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 	if lastElem := lru.list.Back(); lastElem != nil {
 		oldest = lastElem.Value.(*entry).timeAccessed
 	}
-	return int64(lru.list.Len()), lru.size, lru.capacity, oldest
+	return int64(lru.list.Len()), lru.size, lru.capacity, lru.evictions, oldest
 }
 
 // StatsJSON returns stats as a JSON object in a string.
@@ -169,8 +178,8 @@ func (lru *LRUCache) StatsJSON() string {
 	if lru == nil {
 		return "{}"
 	}
-	l, s, c, o := lru.Stats()
-	return fmt.Sprintf("{\"Length\": %v, \"Size\": %v, \"Capacity\": %v, \"OldestAccess\": \"%v\"}", l, s, c, o)
+	l, s, c, e, o := lru.Stats()
+	return fmt.Sprintf("{\"Length\": %v, \"Size\": %v, \"Capacity\": %v, \"Evictions\": %v, \"OldestAccess\": \"%v\"}", l, s, c, e, o)
 }
 
 // Length returns how many elements are in the cache
@@ -192,6 +201,13 @@ func (lru *LRUCache) Capacity() int64 {
 	lru.mu.Lock()
 	defer lru.mu.Unlock()
 	return lru.capacity
+}
+
+// Evictions returns the eviction count.
+func (lru *LRUCache) Evictions() int64 {
+	lru.mu.Lock()
+	defer lru.mu.Unlock()
+	return lru.evictions
 }
 
 // Oldest returns the insertion time of the oldest element in the cache,
@@ -263,5 +279,6 @@ func (lru *LRUCache) checkCapacity() {
 		lru.list.Remove(delElem)
 		delete(lru.table, delValue.key)
 		lru.size -= delValue.size
+		lru.evictions++
 	}
 }

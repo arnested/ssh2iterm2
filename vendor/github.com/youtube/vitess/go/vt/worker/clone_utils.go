@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -13,13 +25,14 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/sqlescape"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 //
@@ -29,7 +42,7 @@ import (
 // Does a topo lookup for a single shard, and returns:
 //	1. Slice of all tablet aliases for the shard.
 //	2. Map of tablet alias : tablet record for all tablets.
-func resolveRefreshTabletsForShard(ctx context.Context, keyspace, shard string, wr *wrangler.Wrangler) (refreshAliases []*topodatapb.TabletAlias, refreshTablets map[topodatapb.TabletAlias]*topo.TabletInfo, err error) {
+func resolveRefreshTabletsForShard(ctx context.Context, keyspace, shard string, wr *wrangler.Wrangler) (refreshAliases []*topodatapb.TabletAlias, refreshTablets map[string]*topo.TabletInfo, err error) {
 	// Keep a long timeout, because we really don't want the copying to succeed, and then the worker to fail at the end.
 	shortCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	refreshAliases, err = wr.TopoServer().FindAllTabletAliasesInShard(shortCtx, keyspace, shard)
@@ -99,27 +112,11 @@ func makeValueString(fields []*querypb.Field, rows [][]sqltypes.Value) string {
 	return buf.String()
 }
 
-// escape adds surrounding backticks (`) to an MySQL identifier.
-// This is required for identifiers which are reserved words e.g. "CREATE".
-func escape(identifier string) string {
-	b := bytes.Buffer{}
-	writeEscaped(&b, identifier)
-	return b.String()
-}
-
-// escapeAll runs escape() for all entries in the slice.
+// escapeAll runs sqlescape.EscapeID() for all entries in the slice.
 func escapeAll(identifiers []string) []string {
 	result := make([]string, len(identifiers))
 	for i := range identifiers {
-		result[i] = escape(identifiers[i])
+		result[i] = sqlescape.EscapeID(identifiers[i])
 	}
 	return result
-}
-
-// writeEscaped escapes the SQL "identifier" before writing it to "b".
-// See also escape().
-func writeEscaped(b *bytes.Buffer, identifier string) {
-	b.WriteByte('`')
-	b.WriteString(identifier)
-	b.WriteByte('`')
 }

@@ -1,6 +1,18 @@
-// Copyright 2017, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package messager
 
@@ -8,17 +20,22 @@ import (
 	"container/heap"
 	"sync"
 
-	"github.com/youtube/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sqltypes"
 )
 
 //_______________________________________________
 
 // MessageRow represents a message row.
+// The first column in Row is always the "id".
 type MessageRow struct {
-	TimeNext int64
-	Epoch    int64
-	ID       sqltypes.Value
-	Message  sqltypes.Value
+	TimeNext    int64
+	Epoch       int64
+	TimeCreated int64
+	Row         []sqltypes.Value
+
+	// defunct is set if the row was asked to be removed
+	// from cache.
+	defunct bool
 }
 
 type messageHeap []*MessageRow
@@ -52,19 +69,35 @@ func (mh *messageHeap) Pop() interface{} {
 
 //_______________________________________________
 
-// cache is the cache for the messager.
+// cache is the cache for the messager. Messages initially
+// start in the sendQueue. When they are popped, they move
+// to the inFlight set. They are eventually discarded
+// after being successfully sent. Messages can be discarded
+// early (while still in the send queue) by any kind of
+// update to a message (like an ack). If so, such messages
+// are marked as defunct in the cache, and are eventually
+// discarded when popped.
 type cache struct {
-	mu        sync.Mutex
-	size      int
+	mu   sync.Mutex
+	size int
+
 	sendQueue messageHeap
-	messages  map[string]*MessageRow
+	// inQueue is used to efficiently find items in sendQueue.
+	// The message id is the key.
+	inQueue map[string]*MessageRow
+
+	// inFlight are messages that are still being sent.
+	// They guard from such messages from being added back prematurely.
+	// The message id is the key.
+	inFlight map[string]bool
 }
 
 // NewMessagerCache creates a new cache.
 func newCache(size int) *cache {
 	mc := &cache{
 		size:     size,
-		messages: make(map[string]*MessageRow),
+		inQueue:  make(map[string]*MessageRow),
+		inFlight: make(map[string]bool),
 	}
 	return mc
 }
@@ -74,7 +107,8 @@ func (mc *cache) Clear() {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	mc.sendQueue = nil
-	mc.messages = make(map[string]*MessageRow)
+	mc.inQueue = make(map[string]*MessageRow)
+	mc.inFlight = make(map[string]bool)
 }
 
 // Add adds a MessageRow to the cache. It returns
@@ -85,14 +119,15 @@ func (mc *cache) Add(mr *MessageRow) bool {
 	if len(mc.sendQueue) >= mc.size {
 		return false
 	}
-	id := mr.ID.String()
-	// Don't check for nil. Messages that are popped for
-	// send are nilled out.
-	if _, ok := mc.messages[id]; ok {
+	id := mr.Row[0].ToString()
+	if mc.inFlight[id] {
+		return true
+	}
+	if _, ok := mc.inQueue[id]; ok {
 		return true
 	}
 	heap.Push(&mc.sendQueue, mr)
-	mc.messages[id] = mr
+	mc.inQueue[id] = mr
 	return true
 }
 
@@ -110,16 +145,16 @@ func (mc *cache) Pop() *MessageRow {
 			return nil
 		}
 		mr := heap.Pop(&mc.sendQueue).(*MessageRow)
-		id := mr.ID.String()
 		// If message was previously marked as defunct, drop
 		// it and continue.
-		if id == "" {
+		if mr.defunct {
 			continue
 		}
-		// Point the message entry to nil. If there is a race
-		// with Discard while the item is being sent, it won't
-		// be reachable.
-		mc.messages[id] = nil
+		id := mr.Row[0].ToString()
+
+		// Move the message from inQueue to inFlight.
+		delete(mc.inQueue, id)
+		mc.inFlight[id] = true
 		return mr
 	}
 }
@@ -129,14 +164,13 @@ func (mc *cache) Discard(ids []string) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	for _, id := range ids {
-		if mr := mc.messages[id]; mr != nil {
+		if mr := mc.inQueue[id]; mr != nil {
 			// The row is still in the queue somewhere. Mark
 			// it as defunct. It will be "garbage collected" later.
-			mr.ID = sqltypes.NULL
-			// "Free" the message.
-			mr.Message = sqltypes.NULL
+			mr.defunct = true
 		}
-		delete(mc.messages, id)
+		delete(mc.inQueue, id)
+		delete(mc.inFlight, id)
 	}
 }
 

@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package vindexes
 
@@ -11,6 +23,14 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/key"
+)
+
+var (
+	_ Vindex     = (*Hash)(nil)
+	_ Reversible = (*Hash)(nil)
 )
 
 // Hash defines vindex that hashes an int64 to a KeyspaceId
@@ -35,45 +55,52 @@ func (vind *Hash) Cost() int {
 	return 1
 }
 
-// Map returns the corresponding KeyspaceId values for the given ids.
-func (vind *Hash) Map(_ VCursor, ids []interface{}) ([][]byte, error) {
-	out := make([][]byte, 0, len(ids))
-	for _, id := range ids {
-		num, err := getNumber(id)
+// IsUnique returns true since the Vindex is unique.
+func (vind *Hash) IsUnique() bool {
+	return true
+}
+
+// IsFunctional returns true since the Vindex is functional.
+func (vind *Hash) IsFunctional() bool {
+	return true
+}
+
+// Map can map ids to key.Destination objects.
+func (vind *Hash) Map(cursor VCursor, ids []sqltypes.Value) ([]key.Destination, error) {
+	out := make([]key.Destination, len(ids))
+	for i, id := range ids {
+		num, err := sqltypes.ToUint64(id)
 		if err != nil {
-			return nil, fmt.Errorf("hash.Map: %v", err)
+			out[i] = key.DestinationNone{}
+			continue
 		}
-		out = append(out, vhash(num))
+		out[i] = key.DestinationKeyspaceID(vhash(num))
 	}
 	return out, nil
 }
 
 // Verify returns true if ids maps to ksids.
-func (vind *Hash) Verify(_ VCursor, ids []interface{}, ksids [][]byte) (bool, error) {
-	if len(ids) != len(ksids) {
-		return false, fmt.Errorf("hash.Verify: length of ids %v doesn't match length of ksids %v", len(ids), len(ksids))
-	}
-	for rowNum := range ids {
-		num, err := getNumber(ids[rowNum])
+func (vind *Hash) Verify(_ VCursor, ids []sqltypes.Value, ksids [][]byte) ([]bool, error) {
+	out := make([]bool, len(ids))
+	for i := range ids {
+		num, err := sqltypes.ToUint64(ids[i])
 		if err != nil {
-			return false, fmt.Errorf("hash.Verify: %v", err)
+			return nil, fmt.Errorf("hash.Verify: %v", err)
 		}
-		if bytes.Compare(vhash(num), ksids[rowNum]) != 0 {
-			return false, nil
-		}
+		out[i] = (bytes.Compare(vhash(num), ksids[i]) == 0)
 	}
-	return true, nil
+	return out, nil
 }
 
 // ReverseMap returns the ids from ksids.
-func (vind *Hash) ReverseMap(_ VCursor, ksids [][]byte) ([]interface{}, error) {
-	reverseIds := make([]interface{}, len(ksids))
-	var err error
-	for rownum, keyspaceID := range ksids {
-		reverseIds[rownum], err = vunhash(keyspaceID)
+func (vind *Hash) ReverseMap(_ VCursor, ksids [][]byte) ([]sqltypes.Value, error) {
+	reverseIds := make([]sqltypes.Value, 0, len(ksids))
+	for _, keyspaceID := range ksids {
+		val, err := vunhash(keyspaceID)
 		if err != nil {
 			return reverseIds, err
 		}
+		reverseIds = append(reverseIds, sqltypes.NewUint64(val))
 	}
 	return reverseIds, nil
 }
@@ -89,18 +116,18 @@ func init() {
 	Register("hash", NewHash)
 }
 
-func vhash(shardKey int64) []byte {
+func vhash(shardKey uint64) []byte {
 	var keybytes, hashed [8]byte
-	binary.BigEndian.PutUint64(keybytes[:], uint64(shardKey))
+	binary.BigEndian.PutUint64(keybytes[:], shardKey)
 	block3DES.Encrypt(hashed[:], keybytes[:])
 	return []byte(hashed[:])
 }
 
-func vunhash(k []byte) (int64, error) {
+func vunhash(k []byte) (uint64, error) {
 	if len(k) != 8 {
 		return 0, fmt.Errorf("invalid keyspace id: %v", hex.EncodeToString(k))
 	}
 	var unhashed [8]byte
 	block3DES.Decrypt(unhashed[:], k)
-	return int64(binary.BigEndian.Uint64(unhashed[:])), nil
+	return binary.BigEndian.Uint64(unhashed[:]), nil
 }

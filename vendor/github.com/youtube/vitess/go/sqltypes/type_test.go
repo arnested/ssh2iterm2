@@ -1,13 +1,25 @@
-// Copyright 2015| Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package sqltypes
 
 import (
 	"testing"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 func TestTypeValues(t *testing.T) {
@@ -99,18 +111,95 @@ func TestTypeValues(t *testing.T) {
 		defined:  Set,
 		expected: 27 | flagIsQuoted,
 	}, {
-		defined:  Tuple,
-		expected: 28,
-	}, {
 		defined:  Geometry,
 		expected: 29 | flagIsQuoted,
 	}, {
 		defined:  TypeJSON,
 		expected: 30 | flagIsQuoted,
+	}, {
+		defined:  Expression,
+		expected: 31,
 	}}
 	for _, tcase := range testcases {
 		if int(tcase.defined) != tcase.expected {
 			t.Errorf("Type %s: %d, want: %d", tcase.defined, int(tcase.defined), tcase.expected)
+		}
+	}
+}
+
+// TestCategory verifies that the type categorizations
+// are non-overlapping and complete.
+func TestCategory(t *testing.T) {
+	alltypes := []querypb.Type{
+		Null,
+		Int8,
+		Uint8,
+		Int16,
+		Uint16,
+		Int24,
+		Uint24,
+		Int32,
+		Uint32,
+		Int64,
+		Uint64,
+		Float32,
+		Float64,
+		Timestamp,
+		Date,
+		Time,
+		Datetime,
+		Year,
+		Decimal,
+		Text,
+		Blob,
+		VarChar,
+		VarBinary,
+		Char,
+		Binary,
+		Bit,
+		Enum,
+		Set,
+		Geometry,
+		TypeJSON,
+		Expression,
+	}
+	for _, typ := range alltypes {
+		matched := false
+		if IsSigned(typ) {
+			if !IsIntegral(typ) {
+				t.Errorf("Signed type %v is not an integral", typ)
+			}
+			matched = true
+		}
+		if IsUnsigned(typ) {
+			if !IsIntegral(typ) {
+				t.Errorf("Unsigned type %v is not an integral", typ)
+			}
+			if matched {
+				t.Errorf("%v matched more than one category", typ)
+			}
+			matched = true
+		}
+		if IsFloat(typ) {
+			if matched {
+				t.Errorf("%v matched more than one category", typ)
+			}
+			matched = true
+		}
+		if IsQuoted(typ) {
+			if matched {
+				t.Errorf("%v matched more than one category", typ)
+			}
+			matched = true
+		}
+		if typ == Null || typ == Decimal || typ == Expression {
+			if matched {
+				t.Errorf("%v matched more than one category", typ)
+			}
+			matched = true
+		}
+		if !matched {
+			t.Errorf("%v matched no category", typ)
 		}
 	}
 }
@@ -157,6 +246,9 @@ func TestIsFunctions(t *testing.T) {
 	}
 	if !IsBinary(Binary) {
 		t.Error("Char: !IsBinary, must be true")
+	}
+	if !isNumber(Int64) {
+		t.Error("Int64: !isNumber, must be true")
 	}
 }
 

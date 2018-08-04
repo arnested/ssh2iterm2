@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -10,20 +22,20 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletconn"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
+	"vitess.io/vitess/go/vt/vttablet/tabletconn"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func TestGreaterThanTupleWhereClause(t *testing.T) {
@@ -34,23 +46,23 @@ func TestGreaterThanTupleWhereClause(t *testing.T) {
 	}{
 		{
 			columns: []string{"a"},
-			row:     []sqltypes.Value{sqltypes.MakeTrusted(sqltypes.Int64, []byte("1"))},
+			row:     []sqltypes.Value{sqltypes.NewInt64(1)},
 			want:    []string{"`a`>1"},
 		},
 		{
 			columns: []string{"a", "b"},
 			row: []sqltypes.Value{
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("1")),
-				sqltypes.MakeTrusted(sqltypes.Float32, []byte("2.1")),
+				sqltypes.NewInt64(1),
+				sqltypes.TestValue(sqltypes.Float32, "2.1"),
 			},
 			want: []string{"`a`>=1", "(`a`,`b`)>(1,2.1)"},
 		},
 		{
 			columns: []string{"a", "b", "c"},
 			row: []sqltypes.Value{
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("1")),
-				sqltypes.MakeTrusted(sqltypes.Float32, []byte("2.1")),
-				sqltypes.MakeTrusted(sqltypes.VarChar, []byte("Bär")),
+				sqltypes.NewInt64(1),
+				sqltypes.TestValue(sqltypes.Float32, "2.1"),
+				sqltypes.NewVarChar("Bär"),
 			},
 			want: []string{"`a`>=1", "(`a`,`b`,`c`)>(1,2.1,'Bär')"},
 		},
@@ -77,8 +89,8 @@ func TestGenerateQuery(t *testing.T) {
 	}{
 		{
 			desc:              "start and end defined",
-			start:             sqltypes.MakeTrusted(sqltypes.Int64, []byte("11")),
-			end:               sqltypes.MakeTrusted(sqltypes.Int64, []byte("26")),
+			start:             sqltypes.NewInt64(11),
+			end:               sqltypes.NewInt64(26),
 			table:             "t1",
 			columns:           []string{"a", "msg1", "msg2"},
 			primaryKeyColumns: []string{"a"},
@@ -86,7 +98,7 @@ func TestGenerateQuery(t *testing.T) {
 		},
 		{
 			desc:              "only end defined",
-			end:               sqltypes.MakeTrusted(sqltypes.Int64, []byte("26")),
+			end:               sqltypes.NewInt64(26),
 			table:             "t1",
 			columns:           []string{"a", "msg1", "msg2"},
 			primaryKeyColumns: []string{"a"},
@@ -94,7 +106,7 @@ func TestGenerateQuery(t *testing.T) {
 		},
 		{
 			desc:              "only start defined",
-			start:             sqltypes.MakeTrusted(sqltypes.Int64, []byte("11")),
+			start:             sqltypes.NewInt64(11),
 			table:             "t1",
 			columns:           []string{"a", "msg1", "msg2"},
 			primaryKeyColumns: []string{"a"},
@@ -116,8 +128,8 @@ func TestGenerateQuery(t *testing.T) {
 		},
 		{
 			desc:              "start and end defined (multi-column primary key)",
-			start:             sqltypes.MakeTrusted(sqltypes.Int64, []byte("11")),
-			end:               sqltypes.MakeTrusted(sqltypes.Int64, []byte("26")),
+			start:             sqltypes.NewInt64(11),
+			end:               sqltypes.NewInt64(26),
 			table:             "t1",
 			columns:           []string{"a", "b", "msg1", "msg2"},
 			primaryKeyColumns: []string{"a", "b"},
@@ -125,14 +137,14 @@ func TestGenerateQuery(t *testing.T) {
 		},
 		{
 			desc:              "start overriden by last row (multi-column primary key)",
-			start:             sqltypes.MakeTrusted(sqltypes.Int64, []byte("11")),
-			end:               sqltypes.MakeTrusted(sqltypes.Int64, []byte("26")),
+			start:             sqltypes.NewInt64(11),
+			end:               sqltypes.NewInt64(26),
 			table:             "t1",
 			columns:           []string{"a", "b", "msg1", "msg2"},
 			primaryKeyColumns: []string{"a", "b"},
 			lastRow: []sqltypes.Value{
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("1")),
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("2")),
+				sqltypes.NewInt64(1),
+				sqltypes.NewInt64(2),
 			},
 			want: "SELECT `a`,`b`,`msg1`,`msg2` FROM `t1` WHERE `a`>=1 AND (`a`,`b`)>(1,2) AND `a`<26 ORDER BY `a`,`b`",
 		},
@@ -142,8 +154,8 @@ func TestGenerateQuery(t *testing.T) {
 			columns:           []string{"a", "b", "msg1", "msg2"},
 			primaryKeyColumns: []string{"a", "b"},
 			lastRow: []sqltypes.Value{
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("1")),
-				sqltypes.MakeTrusted(sqltypes.Int64, []byte("2")),
+				sqltypes.NewInt64(1),
+				sqltypes.NewInt64(2),
 			},
 			want: "SELECT `a`,`b`,`msg1`,`msg2` FROM `t1` WHERE `a`>=1 AND (`a`,`b`)>(1,2) ORDER BY `a`,`b`",
 		},
@@ -172,7 +184,7 @@ func TestGenerateQuery(t *testing.T) {
 func TestNewRestartableResultReader(t *testing.T) {
 	wantErr := errors.New("restartable_result_reader_test.go: context canceled")
 
-	tabletconn.RegisterDialer("fake_dialer", func(tablet *topodatapb.Tablet, timeout time.Duration) (queryservice.QueryService, error) {
+	tabletconn.RegisterDialer("fake_dialer", func(tablet *topodatapb.Tablet, failFast grpcclient.FailFast) (queryservice.QueryService, error) {
 		return nil, wantErr
 	})
 	protocol := flag.CommandLine.Lookup("tablet_protocol").Value.String()

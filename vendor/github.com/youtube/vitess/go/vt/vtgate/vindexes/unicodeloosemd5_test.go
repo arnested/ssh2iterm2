@@ -1,9 +1,29 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package vindexes
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/key"
 )
 
 var charVindex Vindex
@@ -24,7 +44,7 @@ func TestUnicodeLooseMD5String(t *testing.T) {
 	}
 }
 
-func TestUnicodeLooseMD5(t *testing.T) {
+func TestUnicodeLooseMD5Map(t *testing.T) {
 	tcases := []struct {
 		in, out string
 	}{{
@@ -59,51 +79,27 @@ func TestUnicodeLooseMD5(t *testing.T) {
 		out: "\xac\x0f\x91y\xf5\x1d\xb8\u007f\xe8\xec\xc0\xcf@ʹz",
 	}}
 	for _, tcase := range tcases {
-		got, err := charVindex.(Unique).Map(nil, []interface{}{[]byte(tcase.in)})
+		got, err := charVindex.Map(nil, []sqltypes.Value{sqltypes.NewVarBinary(tcase.in)})
 		if err != nil {
 			t.Error(err)
 		}
-		out := string(got[0])
+		out := string(got[0].(key.DestinationKeyspaceID))
 		if out != tcase.out {
 			t.Errorf("Map(%#v): %#v, want %#v", tcase.in, out, tcase.out)
 		}
-		ok, err := charVindex.Verify(nil, []interface{}{tcase.in}, [][]byte{[]byte(tcase.out)})
-		if err != nil {
-			t.Error(err)
-		}
-		if !ok {
-			t.Errorf("Verify(%#v): false, want true", tcase.in)
-		}
 	}
-
-	//Negative test case
-	_, err := charVindex.(Unique).Map(nil, []interface{}{1})
-	want := "UnicodeLooseMD5.Map: unexpected data type for getBytes: int"
-	if err.Error() != want {
-		t.Error(err)
-	}
-
 }
 
-func TestUnicodeLooseMD5Neg(t *testing.T) {
-	_, err := charVindex.Verify(nil, []interface{}{[]byte("test1"), []byte("test2")}, [][]byte{[]byte("test1")})
-	want := "UnicodeLooseMD5.Verify: length of ids 2 doesn't match length of ksids 1"
-	if err.Error() != want {
-		t.Error(err.Error())
-	}
-
-	ok, err := charVindex.Verify(nil, []interface{}{[]byte("test2")}, [][]byte{[]byte("test1")})
+func TestUnicodeLooseMD5Verify(t *testing.T) {
+	ids := []sqltypes.Value{sqltypes.NewVarBinary("Test"), sqltypes.NewVarBinary("TEst"), sqltypes.NewVarBinary("different")}
+	ksids := [][]byte{[]byte("\v^۴\x01\xfdu$96\x90I\x1dd\xf1\xf5"), []byte("\v^۴\x01\xfdu$96\x90I\x1dd\xf1\xf5"), []byte("\v^۴\x01\xfdu$96\x90I\x1dd\xf1\xf5")}
+	got, err := charVindex.Verify(nil, ids, ksids)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
-	if ok {
-		t.Errorf("Verify(%#v): true, want false", []byte("test2"))
-	}
-
-	_, err = charVindex.Verify(nil, []interface{}{1}, [][]byte{[]byte("test1")})
-	want = "UnicodeLooseMD5.Verify: unexpected data type for getBytes: int"
-	if err.Error() != want {
-		t.Error(err)
+	want := []bool{true, true, false}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("binaryMD5.Verify: %v, want %v", got, want)
 	}
 }
 

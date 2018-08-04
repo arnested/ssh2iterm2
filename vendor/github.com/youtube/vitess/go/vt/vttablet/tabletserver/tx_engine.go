@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tabletserver
 
@@ -8,20 +20,25 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/timer"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/dbconfigs"
-	"github.com/youtube/vitess/go/vt/dtids"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/connpool"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"github.com/youtube/vitess/go/vt/vtgate/vtgateconn"
+	"vitess.io/vitess/go/timer"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/dbconfigs"
+	"vitess.io/vitess/go/vt/dtids"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/vtgate/vtgateconn"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/connpool"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/txlimiter"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 // TxEngine handles transactions.
 type TxEngine struct {
+	dbconfigs dbconfigs.DBConfigs
+
 	isOpen, twopcEnabled bool
 	shutdownGracePeriod  time.Duration
 	coordinatorAddress   string
@@ -34,16 +51,29 @@ type TxEngine struct {
 }
 
 // NewTxEngine creates a new TxEngine.
-func NewTxEngine(checker MySQLChecker, config tabletenv.TabletConfig) *TxEngine {
+func NewTxEngine(checker connpool.MySQLChecker, config tabletenv.TabletConfig) *TxEngine {
 	te := &TxEngine{
 		shutdownGracePeriod: time.Duration(config.TxShutDownGracePeriod * 1e9),
 	}
-	te.txPool = NewTxPool(
-		config.PoolNamePrefix+"TransactionPool",
+	limiter := txlimiter.New(
 		config.TransactionCap,
+		config.TransactionLimitPerUser,
+		config.EnableTransactionLimit,
+		config.EnableTransactionLimitDryRun,
+		config.TransactionLimitByUsername,
+		config.TransactionLimitByPrincipal,
+		config.TransactionLimitByComponent,
+		config.TransactionLimitBySubcomponent,
+	)
+	te.txPool = NewTxPool(
+		config.PoolNamePrefix,
+		config.TransactionCap,
+		config.FoundRowsPoolSize,
 		time.Duration(config.TransactionTimeout*1e9),
 		time.Duration(config.IdleTimeout*1e9),
+		config.TxPoolWaiterCap,
 		checker,
+		limiter,
 	)
 	te.twopcEnabled = config.TwoPCEnable
 	if te.twopcEnabled {
@@ -76,28 +106,33 @@ func NewTxEngine(checker MySQLChecker, config tabletenv.TabletConfig) *TxEngine 
 	return te
 }
 
+// InitDBConfig must be called before Init.
+func (te *TxEngine) InitDBConfig(dbcfgs dbconfigs.DBConfigs) {
+	te.dbconfigs = dbcfgs
+}
+
 // Init must be called once when vttablet starts for setting
 // up the metadata tables.
-func (te *TxEngine) Init(dbconfigs dbconfigs.DBConfigs) error {
+func (te *TxEngine) Init() error {
 	if te.twopcEnabled {
-		return te.twoPC.Init(dbconfigs.SidecarDBName, &dbconfigs.Dba)
+		return te.twoPC.Init(te.dbconfigs.SidecarDBName, &te.dbconfigs.Dba)
 	}
 	return nil
 }
 
 // Open opens the TxEngine. If 2pc is enabled, it restores
 // all previously prepared transactions from the redo log.
-func (te *TxEngine) Open(dbconfigs dbconfigs.DBConfigs) {
+func (te *TxEngine) Open() {
 	if te.isOpen {
 		return
 	}
-	te.txPool.Open(&dbconfigs.App, &dbconfigs.Dba)
+	te.txPool.Open(&te.dbconfigs.App, &te.dbconfigs.Dba, &te.dbconfigs.AppDebug)
 	if !te.twopcEnabled {
 		te.isOpen = true
 		return
 	}
 
-	te.twoPC.Open(dbconfigs)
+	te.twoPC.Open(te.dbconfigs)
 	if err := te.prepareFromRedo(); err != nil {
 		// If this operation fails, we choose to raise an alert and
 		// continue anyway. Serving traffic is considered more important
@@ -190,7 +225,7 @@ outer:
 		if txid > maxid {
 			maxid = txid
 		}
-		conn, err := te.txPool.LocalBegin(ctx)
+		conn, err := te.txPool.LocalBegin(ctx, &querypb.ExecuteOptions{})
 		if err != nil {
 			allErr.RecordError(err)
 			continue
@@ -270,7 +305,7 @@ func (te *TxEngine) startWatchdog() {
 			return
 		}
 
-		coordConn, err := vtgateconn.Dial(ctx, te.coordinatorAddress, te.abandonAge/4, "")
+		coordConn, err := vtgateconn.Dial(ctx, te.coordinatorAddress)
 		if err != nil {
 			tabletenv.InternalErrors.Add("WatchdogFail", 1)
 			log.Errorf("Error connecting to coordinator '%v': %v", te.coordinatorAddress, err)

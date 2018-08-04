@@ -1,14 +1,30 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package splitquery
 
 import (
 	"fmt"
 
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vterrors"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/querytypes"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/schema"
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
 
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 // SplitParams stores the context for a splitquery computation. It is used by
@@ -18,7 +34,7 @@ type SplitParams struct {
 	// The following fields are directly given by the caller -- they have a corresponding
 	// parameter in each constructor.
 	sql           string
-	bindVariables map[string]interface{}
+	bindVariables map[string]*querypb.BindVariable
 
 	// Exactly one of splitCount, numRowsPerQueryPart will be given by the caller.
 	// See the two NewSplitParams... constructors below. The other field member
@@ -60,7 +76,7 @@ type SplitParams struct {
 // 'schema' should map a table name to a schema.Table. It is used for looking up the split-column
 // types and error checking.
 func NewSplitParamsGivenNumRowsPerQueryPart(
-	query querytypes.BoundQuery,
+	query *querypb.BoundQuery,
 	splitColumnNames []sqlparser.ColIdent,
 	numRowsPerQueryPart int64,
 	schema map[string]*schema.Table,
@@ -101,7 +117,7 @@ func NewSplitParamsGivenNumRowsPerQueryPart(
 // 'schema' should map a table name to a schema.Table. It is used for looking up the split-column
 // types and error checking.
 func NewSplitParamsGivenSplitCount(
-	query querytypes.BoundQuery,
+	query *querypb.BoundQuery,
 	splitColumnNames []sqlparser.ColIdent,
 	splitCount int64,
 	schema map[string]*schema.Table,
@@ -127,7 +143,7 @@ func (sp *SplitParams) GetSplitTableName() sqlparser.TableIdent {
 // newSplitParams validates and initializes all the fields except splitCount and
 // numRowsPerQueryPart. It contains the common code for the constructors above.
 func newSplitParams(
-	query querytypes.BoundQuery,
+	query *querypb.BoundQuery,
 	splitColumnNames []sqlparser.ColIdent,
 	schemaMap map[string]*schema.Table,
 ) (*SplitParams, error) {

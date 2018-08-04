@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package buffer
 
 import (
@@ -7,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topo/topoproto"
 )
 
 var (
@@ -17,9 +33,9 @@ var (
 	window                  = flag.Duration("buffer_window", 10*time.Second, "Duration for how long a request should be buffered at most.")
 	size                    = flag.Int("buffer_size", 10, "Maximum number of buffered requests in flight (across all ongoing failovers).")
 	maxFailoverDuration     = flag.Duration("buffer_max_failover_duration", 20*time.Second, "Stop buffering completely if a failover takes longer than this duration.")
-	minTimeBetweenFailovers = flag.Duration("buffer_min_time_between_failovers", 1*time.Minute, "Minimum time between the end of a failover and the start of the next one. Faster consecutive failovers will not trigger buffering.")
+	minTimeBetweenFailovers = flag.Duration("buffer_min_time_between_failovers", 1*time.Minute, "Minimum time between the end of a failover and the start of the next one (tracked per shard). Faster consecutive failovers will not trigger buffering.")
 
-	drainConcurrency = flag.Int("buffer_drain_concurrency", 1, "Maximum number of requests retried simultaneously.")
+	drainConcurrency = flag.Int("buffer_drain_concurrency", 1, "Maximum number of requests retried simultaneously. More concurrency will increase the load on the MASTER vttablet when draining the buffer.")
 
 	shards = flag.String("buffer_keyspace_shards", "", "If not empty, limit buffering to these entries (comma separated). Entry format: keyspace or keyspace/shard. Requires --enable_buffer=true.")
 )
@@ -32,7 +48,7 @@ func resetFlagsForTesting() {
 	flag.Set("buffer_window", "10s")
 	flag.Set("buffer_keyspace_shards", "")
 	flag.Set("buffer_max_failover_duration", "20s")
-	flag.Set("buffer_min_time_between_failovers", "5m")
+	flag.Set("buffer_min_time_between_failovers", "1m")
 }
 
 func verifyFlags() error {

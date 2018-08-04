@@ -1,5 +1,22 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.util;
 
+import com.google.protobuf.ByteString;
 import io.vitess.proto.Query;
 import io.vitess.proto.Topodata;
 
@@ -19,23 +36,27 @@ public class Constants {
         "Tablet Type to which Vitess will connect(master, replica, rdonly)";
     public static final String DEFAULT_PORT = "15991";
     public static final Topodata.TabletType DEFAULT_TABLET_TYPE = Topodata.TabletType.MASTER;
-    public static final long CONNECTION_TIMEOUT = 30000;
     public static final String LITERAL_V = "v";
     public static final String LITERAL_SINGLE_QUOTE = "'";
-    public static final String SQL_SELECT = "select";
-    public static final int DRIVER_MAJOR_VERSION = 1;
-    public static final int DRIVER_MINOR_VERSION = 0;
+    public static final String SQL_S = "s";
+    public static final int DRIVER_MAJOR_VERSION = 2;
+    public static final int DRIVER_MINOR_VERSION = 2;
     public static final int MAX_BUFFER_SIZE = 65535;
     //Default Timeout in miliseconds
     public static final int DEFAULT_TIMEOUT = 30000;
-    public static final String SQL_SHOW = "show";
     public static final String VITESS_KEYSPACE = "Keyspace name in Vitess Server";
     public static final Constants.QueryExecuteType DEFAULT_EXECUTE_TYPE = QueryExecuteType.SIMPLE;
     public static final String EXECUTE_TYPE_DESC = "Query execution type: simple or stream \n";
     public static final String USERNAME_DESC = "Username used for ACL validation \n";
     public static final Query.ExecuteOptions.IncludedFields DEFAULT_INCLUDED_FIELDS = Query.ExecuteOptions.IncludedFields.ALL;
+    public static final String DEFAULT_KEYSPACE = "";
+    public static final String DEFAULT_SHARD = "";
+    public static final String DEFAULT_USERNAME = null;
+    public static final String DEFAULT_TARGET = "";
+    public static final String DEFAULT_CATALOG = DEFAULT_KEYSPACE;
+    public static final ByteString ZERO_DATE_TIME_PREFIX = ByteString.copyFromUtf8("0000-00-00");
 
-    private Constants() {
+  private Constants() {
     }
 
 
@@ -44,14 +65,13 @@ public class Constants {
         public static final String CONN_CLOSED = "Connection is Closed";
         public static final String INIT_FAILED = "Failed to Initialize Vitess JDBC Driver";
         public static final String INVALID_CONN_URL = "Connection URL is invalid";
-        public static final String READ_ONLY = "Read Only mode is not supported";
         public static final String STMT_CLOSED = "Statement is closed";
         public static final String SQL_FEATURE_NOT_SUPPORTED = "SQL Feature Not Supported";
         public static final String TIMEOUT_NEGATIVE = "Timeout value cannot be negative";
         public static final String COMMIT_WHEN_AUTO_COMMIT_TRUE =
             "Cannot call commit when auto commit is true";
         public static final String ROLLBACK_WHEN_AUTO_COMMIT_TRUE =
-            "Cannot call commit when auto commit is true";
+            "Cannot call rollback when auto commit is true";
         public static final String CLOSED_RESULT_SET = "Result Set closed";
         public static final String INVALID_COLUMN_INDEX = "Invalid Column Index";
         public static final String VITESS_CURSOR_CLOSE_ERROR =
@@ -92,18 +112,23 @@ public class Constants {
         public static final String NO_KEYSPACE =
             "Querying Database Information without providing keyspace";
         public static final String QUERY_FAILED = "One or more queries failed in batch execution";
+        public static final String READ_ONLY =
+            "Connection has been set to read only and an update was attempted";
     }
 
 
     public static final class Property {
-        public static final String TABLET_TYPE = "TABLET_TYPE";
-        public static final String HOST = "HOST";
-        public static final String PORT = "PORT";
-        public static final String DBNAME = "DBNAME";
-        public static final String KEYSPACE = "KEYSPACE";
+        @Deprecated
+        public static final String OLD_TABLET_TYPE = "TABLET_TYPE";
+        public static final String TABLET_TYPE = "tabletType";
+        public static final String HOST = "host";
+        public static final String PORT = "port";
+        public static final String DBNAME = "dbName";
+        public static final String KEYSPACE = "keyspace";
         public static final String USERNAME = "userName";
         public static final String EXECUTE_TYPE = "executeType";
         public static final String TWOPC_ENABLED = "twopcEnabled";
+        public static final String SHARD = "shard";
 
         public static final String USE_SSL = "useSSL";
         public static final String KEYSTORE = "keyStore";
@@ -122,10 +147,23 @@ public class Constants {
         public static final String TRUSTSTORE_PASSWORD_FULL = "javax.net.ssl.trustStorePassword";
         public static final String TRUST_ALIAS_FULL = "javax.net.ssl.trustAlias";
         public static final String INCLUDED_FIELDS = "includedFields";
+        public static final String TARGET = "target";
     }
 
 
     public enum QueryExecuteType {
         SIMPLE, STREAM
+    }
+
+    public enum ZeroDateTimeBehavior {
+        /**
+         * This is the current behavior. It completely garbles null timestamps. It is mostly likely
+         * entirely incorrect but we will keep it for backwards compatibility.
+         */
+        GARBLE,
+        /**
+         * This matches the MySQL JDBC driver convertToNull behavior.
+         */
+        CONVERTTONULL
     }
 }

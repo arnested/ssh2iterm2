@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package splitquery
 
 import (
@@ -5,15 +21,14 @@ import (
 	"math/big"
 	"strconv"
 
-	log "github.com/golang/glog"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vterrors"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/schema"
-
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 // EqualSplitsAlgorithm implements the SplitAlgorithmInterface and represents the equal-splits
@@ -178,9 +193,9 @@ func buildMinMaxQuery(splitParams *SplitParams) string {
 		panic(fmt.Sprintf("Can't get tableName from query %v", splitParams.sql))
 	}
 	return fmt.Sprintf("select min(%v), max(%v) from %v",
-		splitParams.splitColumns[0].Name,
-		splitParams.splitColumns[0].Name,
-		tableName)
+		sqlparser.String(splitParams.splitColumns[0].Name),
+		sqlparser.String(splitParams.splitColumns[0].Name),
+		sqlparser.String(tableName))
 }
 
 // bigRatToValue converts 'number' to an SQL value with SQL type: valueType.
@@ -203,7 +218,7 @@ func bigRatToValue(number *big.Rat, valueType querypb.Type) sqltypes.Value {
 	default:
 		panic(fmt.Sprintf("Unsupported type: %v", valueType))
 	}
-	result, err := sqltypes.ValueFromBytes(valueType, numberAsBytes)
+	result, err := sqltypes.NewValue(valueType, numberAsBytes)
 	if err != nil {
 		panic(fmt.Sprintf("sqltypes.ValueFromBytes failed with: %v", err))
 	}
@@ -230,19 +245,19 @@ func bigIntToSliceOfBytes(bigInt *big.Int) []byte {
 func valueToBigRat(value sqltypes.Value, valueType querypb.Type) (*big.Rat, error) {
 	switch {
 	case sqltypes.IsUnsigned(valueType):
-		nativeValue, err := value.ParseUint64()
+		nativeValue, err := sqltypes.ToUint64(value)
 		if err != nil {
 			return nil, err
 		}
 		return uint64ToBigRat(nativeValue), nil
 	case sqltypes.IsSigned(valueType):
-		nativeValue, err := value.ParseInt64()
+		nativeValue, err := sqltypes.ToInt64(value)
 		if err != nil {
 			return nil, err
 		}
 		return int64ToBigRat(nativeValue), nil
 	case sqltypes.IsFloat(valueType):
-		nativeValue, err := value.ParseFloat64()
+		nativeValue, err := sqltypes.ToFloat64(value)
 		if err != nil {
 			return nil, err
 		}

@@ -3,6 +3,7 @@ package sshconfig
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,26 @@ Host face
 	if err != nil {
 		t.Errorf("unable to parse config: %s", err.Error())
 	}
+
+	configCR := strings.Replace(`Host google
+  HostName google.se
+  User goog
+  Port 2222
+  ProxyCommand ssh -q pluto nc saturn 22
+  HostKeyAlgorithms ssh-dss
+  # comment
+  IdentityFile ~/.ssh/company
+
+Host face
+  HostName facebook.com
+  User mark
+  Port 22`, "\n", "\r\n", -1)
+
+	_, err = parse(configCR)
+
+	if err != nil {
+		t.Errorf("unable to parse config: %s", err.Error())
+	}
 }
 
 func TestMultipleHost(t *testing.T) {
@@ -45,6 +66,18 @@ func TestMultipleHost(t *testing.T) {
 	if ok := reflect.DeepEqual([]string{"google", "google2", "aws"}, h.Host); !ok {
 		t.Error("unexpected host mismatch")
 	}
+
+}
+
+// TestTrailingSpace ensures the parser does not hang when attempting to parse
+// a Host declaration with a trailing space after a pattern
+func TestTrailingSpace(t *testing.T) {
+	// in the config below, the first line is "Host google \n"
+	config := `
+Host googlespace 
+    HostName google.com
+`
+	parse(config)
 }
 
 func TestIgnoreKeyword(t *testing.T) {

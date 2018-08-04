@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tabletmanager
 
@@ -12,14 +24,14 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/golang/glog"
-	"github.com/youtube/vitess/go/flagutil"
-	"github.com/youtube/vitess/go/netutil"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/flagutil"
+	"vitess.io/vitess/go/netutil"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -59,7 +71,7 @@ func (agent *ActionAgent) InitTablet(port, gRPCPort int32) error {
 	}
 
 	// parse and validate shard name
-	shard, _, err := topo.ValidateShardName(*initShard)
+	shard, keyRange, err := topo.ValidateShardName(*initShard)
 	if err != nil {
 		return fmt.Errorf("cannot validate shard name %v: %v", *initShard, err)
 	}
@@ -90,11 +102,17 @@ func (agent *ActionAgent) InitTablet(port, gRPCPort int32) error {
 			// There's no existing tablet record, so we can assume
 			// no one has left us a message to step down.
 			tabletType = topodatapb.TabletType_MASTER
+			// Update the TER timestamp (current value is 0) because we
+			// assume that we are actually the MASTER and in case of a tiebreak,
+			// vtgate should prefer us.
+			agent.setExternallyReparentedTime(time.Now())
 		case nil:
 			if oldTablet.Type == topodatapb.TabletType_MASTER {
 				// We're marked as master in the shard record,
 				// and our existing tablet record agrees.
 				tabletType = topodatapb.TabletType_MASTER
+				// Same comment as above. Update tiebreaking timestamp to now.
+				agent.setExternallyReparentedTime(time.Now())
 			}
 		default:
 			return fmt.Errorf("InitTablet failed to read existing tablet record: %v", err)
@@ -137,7 +155,8 @@ func (agent *ActionAgent) InitTablet(port, gRPCPort int32) error {
 		Hostname:       hostname,
 		PortMap:        make(map[string]int32),
 		Keyspace:       *initKeyspace,
-		Shard:          *initShard,
+		Shard:          shard,
+		KeyRange:       keyRange,
 		Type:           tabletType,
 		DbNameOverride: *initDbNameOverride,
 		Tags:           initTags,
@@ -147,9 +166,6 @@ func (agent *ActionAgent) InitTablet(port, gRPCPort int32) error {
 	}
 	if gRPCPort != 0 {
 		tablet.PortMap["grpc"] = gRPCPort
-	}
-	if err := topo.TabletComplete(tablet); err != nil {
-		return fmt.Errorf("InitTablet TabletComplete failed: %v", err)
 	}
 
 	// Now try to create the record (it will also fix up the
@@ -172,7 +188,7 @@ func (agent *ActionAgent) InitTablet(port, gRPCPort int32) error {
 		}
 
 		// Then overwrite everything, ignoring version mismatch.
-		if err := agent.TopoServer.UpdateTablet(ctx, topo.NewTabletInfo(tablet, -1)); err != nil {
+		if err := agent.TopoServer.UpdateTablet(ctx, topo.NewTabletInfo(tablet, nil)); err != nil {
 			return fmt.Errorf("UpdateTablet failed: %v", err)
 		}
 	default:

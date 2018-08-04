@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package framework
 
@@ -12,15 +24,15 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqldb"
-	"github.com/youtube/vitess/go/vt/dbconfigs"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"github.com/youtube/vitess/go/vt/vtgate/fakerpcvtgateconn"
-	"github.com/youtube/vitess/go/vt/vtgate/vtgateconn"
+	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/vt/dbconfigs"
+	"vitess.io/vitess/go/vt/vtgate/fakerpcvtgateconn"
+	"vitess.io/vitess/go/vt/vtgate/vtgateconn"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -37,11 +49,11 @@ var (
 // StartServer starts the server and initializes
 // all the global variables. This function should only be called
 // once at the beginning of the test.
-func StartServer(connParams sqldb.ConnParams) error {
+func StartServer(connParams, connAppDebugParams mysql.ConnParams) error {
 	// Setup a fake vtgate server.
 	protocol := "resolveTest"
 	*vtgateconn.VtgateProtocol = protocol
-	vtgateconn.RegisterDialer(protocol, func(context.Context, string, time.Duration) (vtgateconn.Impl, error) {
+	vtgateconn.RegisterDialer(protocol, func(context.Context, string) (vtgateconn.Impl, error) {
 		return &txResolver{
 			FakeVTGateConn: fakerpcvtgateconn.FakeVTGateConn{},
 		}, nil
@@ -49,14 +61,9 @@ func StartServer(connParams sqldb.ConnParams) error {
 
 	dbcfgs := dbconfigs.DBConfigs{
 		App:           connParams,
+		AppDebug:      connAppDebugParams,
 		SidecarDBName: "_vt",
 	}
-
-	mysqld := mysqlctl.NewMysqld(
-		&mysqlctl.Mycnf{},
-		&dbcfgs,
-		dbconfigs.AppConfig,
-	)
 
 	config := tabletenv.DefaultQsConfig
 	config.EnableAutoCommit = true
@@ -64,6 +71,7 @@ func StartServer(connParams sqldb.ConnParams) error {
 	config.TwoPCEnable = true
 	config.TwoPCAbandonAge = 1
 	config.TwoPCCoordinatorAddress = "fake"
+	config.EnableHotRowProtection = true
 
 	Target = querypb.Target{
 		Keyspace:   "vttest",
@@ -73,7 +81,7 @@ func StartServer(connParams sqldb.ConnParams) error {
 
 	Server = tabletserver.NewTabletServerWithNilTopoServer(config)
 	Server.Register()
-	err := Server.StartService(Target, dbcfgs, mysqld)
+	err := Server.StartService(Target, dbcfgs)
 	if err != nil {
 		return fmt.Errorf("could not start service: %v", err)
 	}

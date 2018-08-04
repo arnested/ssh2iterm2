@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package sqlannotation provides functions
 // for annotating DML statements with keyspace-id
@@ -19,8 +31,8 @@ import (
 
 	"bytes"
 
-	"github.com/youtube/vitess/go/stats"
-	"github.com/youtube/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/vt/sqlparser"
 )
 
 const (
@@ -28,7 +40,7 @@ const (
 )
 
 var (
-	filteredReplicationUnfriendlyStatementsCount = stats.NewInt("FilteredReplicationUnfriendlyStatementsCount")
+	filteredReplicationUnfriendlyStatementsCount = stats.NewCounter("FilteredReplicationUnfriendlyStatementsCount", "Count of unfriendly statements found in filtered replication")
 )
 
 // AnnotateIfDML annotates 'sql' based on 'keyspaceIDs'
@@ -50,15 +62,15 @@ func AnnotateIfDML(sql string, keyspaceIDs [][]byte) string {
 
 // AddKeyspaceIDs returns a copy of 'sql' annotated
 // with the given keyspace id. It also appends the
-// additional trailingComments, if any.
-func AddKeyspaceIDs(sql string, keyspaceIDs [][]byte, trailingComments string) string {
+// additional marginComments, if any.
+func AddKeyspaceIDs(sql string, keyspaceIDs [][]byte, marginComments string) string {
 	encodedIDs := make([][]byte, len(keyspaceIDs))
 	for i, src := range keyspaceIDs {
 		encodedIDs[i] = make([]byte, hex.EncodedLen(len(src)))
 		hex.Encode(encodedIDs[i], src)
 	}
 	return fmt.Sprintf("%s /* vtgate:: keyspace_id:%s */%s",
-		sql, bytes.Join(encodedIDs, []byte(",")), trailingComments)
+		sql, bytes.Join(encodedIDs, []byte(",")), marginComments)
 }
 
 // ExtractKeyspaceIDS parses the annotation of the given statement and tries
@@ -68,8 +80,8 @@ func AddKeyspaceIDs(sql string, keyspaceIDs [][]byte, trailingComments string) s
 // or some other parsing error occured, keyspaceID is set to nil and err is set to a non-nil
 // error value.
 func ExtractKeyspaceIDS(sql string) (keyspaceIDs [][]byte, err error) {
-	_, comments := sqlparser.SplitTrailingComments(sql)
-	keyspaceIDString, hasKeyspaceID := extractStringBetween(comments, "/* vtgate:: keyspace_id:", " ")
+	_, comments := sqlparser.SplitMarginComments(sql)
+	keyspaceIDString, hasKeyspaceID := extractStringBetween(comments.Trailing, "/* vtgate:: keyspace_id:", " ")
 	hasUnfriendlyAnnotation := (strings.Index(sql, filteredReplicationUnfriendlyAnnotation) != -1)
 	if !hasKeyspaceID {
 		if hasUnfriendlyAnnotation {
