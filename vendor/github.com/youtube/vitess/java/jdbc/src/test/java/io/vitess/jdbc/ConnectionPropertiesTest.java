@@ -1,19 +1,37 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.jdbc;
 
-import io.vitess.proto.Query;
-import io.vitess.proto.Topodata;
-import io.vitess.util.Constants;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Properties;
+
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.Mockito;
 
+import io.vitess.proto.Query;
+import io.vitess.proto.Topodata;
+import io.vitess.util.Constants;
+
 public class ConnectionPropertiesTest {
 
-    private static final int NUM_PROPS = 20;
+    private static final int NUM_PROPS = 37;
 
     @Test
     public void testReflection() throws Exception {
@@ -41,6 +59,7 @@ public class ConnectionPropertiesTest {
         Assert.assertEquals("useBlobToStoreUTF8OutsideBMP", false, props.getUseBlobToStoreUTF8OutsideBMP());
         Assert.assertEquals("utf8OutsideBmpIncludedColumnNamePattern", null, props.getUtf8OutsideBmpIncludedColumnNamePattern());
         Assert.assertEquals("utf8OutsideBmpExcludedColumnNamePattern", null, props.getUtf8OutsideBmpExcludedColumnNamePattern());
+        Assert.assertEquals("zeroDateTimeBehavior", Constants.ZeroDateTimeBehavior.GARBLE, props.getZeroDateTimeBehavior());
         Assert.assertEquals("characterEncoding", null, props.getEncoding());
         Assert.assertEquals("executeType", Constants.DEFAULT_EXECUTE_TYPE, props.getExecuteType());
         Assert.assertEquals("twopcEnabled", false, props.getTwopcEnabled());
@@ -48,6 +67,9 @@ public class ConnectionPropertiesTest {
         Assert.assertEquals("includedFieldsCache", true, props.isIncludeAllFields());
         Assert.assertEquals("tabletType", Constants.DEFAULT_TABLET_TYPE, props.getTabletType());
         Assert.assertEquals("useSSL", false, props.getUseSSL());
+        Assert.assertEquals("useAffectedRows", true, props.getUseAffectedRows());
+        Assert.assertEquals("refreshConnection", false, props.getRefreshConnection());
+        Assert.assertEquals("refreshSeconds", 60, props.getRefreshSeconds());
     }
 
     @Test
@@ -63,6 +85,7 @@ public class ConnectionPropertiesTest {
         info.setProperty("utf8OutsideBmpIncludedColumnNamePattern", "(foo|bar)?baz");
         info.setProperty("utf8OutsideBmpExcludedColumnNamePattern", "(foo|bar)?baz");
         info.setProperty("characterEncoding", "utf-8");
+        info.setProperty("zeroDateTimeBehavior", "convertToNull");
         info.setProperty("executeType", Constants.QueryExecuteType.STREAM.name());
         info.setProperty("twopcEnabled", "yes");
         info.setProperty("includedFields", Query.ExecuteOptions.IncludedFields.TYPE_ONLY.name());
@@ -77,6 +100,7 @@ public class ConnectionPropertiesTest {
         Assert.assertEquals("useBlobToStoreUTF8OutsideBMP", true, props.getUseBlobToStoreUTF8OutsideBMP());
         Assert.assertEquals("utf8OutsideBmpIncludedColumnNamePattern", "(foo|bar)?baz", props.getUtf8OutsideBmpIncludedColumnNamePattern());
         Assert.assertEquals("utf8OutsideBmpExcludedColumnNamePattern", "(foo|bar)?baz", props.getUtf8OutsideBmpExcludedColumnNamePattern());
+        Assert.assertEquals("zeroDateTimeBehavior", Constants.ZeroDateTimeBehavior.CONVERTTONULL, props.getZeroDateTimeBehavior());
         Assert.assertEquals("characterEncoding", "utf-8", props.getEncoding());
         Assert.assertEquals("executeType", Constants.QueryExecuteType.STREAM, props.getExecuteType());
         Assert.assertEquals("twopcEnabled", true, props.getTwopcEnabled());
@@ -108,7 +132,7 @@ public class ConnectionPropertiesTest {
         Assert.assertEquals(NUM_PROPS, infos.length);
 
         // Test the expected fields for just 1
-        int indexForFullTest = 8;
+        int indexForFullTest = 3;
         Assert.assertEquals("executeType", infos[indexForFullTest].name);
         Assert.assertEquals("Query execution type: simple or stream",
             infos[indexForFullTest].description);
@@ -121,16 +145,17 @@ public class ConnectionPropertiesTest {
         Assert.assertArrayEquals(allowed, infos[indexForFullTest].choices);
 
         // Test that name exists for the others, as a sanity check
-        Assert.assertEquals("functionsNeverReturnBlobs", infos[1].name);
-        Assert.assertEquals("tinyInt1isBit", infos[2].name);
-        Assert.assertEquals("yearIsDateType", infos[3].name);
-        Assert.assertEquals("useBlobToStoreUTF8OutsideBMP", infos[4].name);
-        Assert.assertEquals("utf8OutsideBmpIncludedColumnNamePattern", infos[5].name);
-        Assert.assertEquals("utf8OutsideBmpExcludedColumnNamePattern", infos[6].name);
-        Assert.assertEquals("characterEncoding", infos[7].name);
-        Assert.assertEquals(Constants.Property.TWOPC_ENABLED, infos[9].name);
-        Assert.assertEquals(Constants.Property.INCLUDED_FIELDS, infos[10].name);
-        Assert.assertEquals(Constants.Property.TABLET_TYPE, infos[11].name);
+        Assert.assertEquals("dbName", infos[1].name);
+        Assert.assertEquals("characterEncoding", infos[2].name);
+        Assert.assertEquals("executeType", infos[3].name);
+        Assert.assertEquals("functionsNeverReturnBlobs", infos[4].name);
+        Assert.assertEquals("grpcRetriesEnabled", infos[5].name);
+        Assert.assertEquals("grpcRetriesBackoffMultiplier", infos[6].name);
+        Assert.assertEquals("grpcRetriesInitialBackoffMillis", infos[7].name);
+        Assert.assertEquals("grpcRetriesMaxBackoffMillis", infos[8].name);
+        Assert.assertEquals(Constants.Property.INCLUDED_FIELDS, infos[9].name);
+        Assert.assertEquals(Constants.Property.TABLET_TYPE, infos[19].name);
+        Assert.assertEquals(Constants.Property.TWOPC_ENABLED, infos[27].name);
     }
 
     @Test
@@ -183,7 +208,7 @@ public class ConnectionPropertiesTest {
         Assert.assertEquals(Constants.DEFAULT_INCLUDED_FIELDS, props.getIncludedFields());
         Assert.assertEquals(true, props.isIncludeAllFields());
 
-        // execute type and simple boolean cahce
+        // execute type and simple boolean cache
         Assert.assertEquals(Constants.DEFAULT_EXECUTE_TYPE, props.getExecuteType());
         Assert.assertEquals(Constants.DEFAULT_EXECUTE_TYPE == Constants.QueryExecuteType.SIMPLE, props.isSimpleExecute());
 
@@ -200,12 +225,66 @@ public class ConnectionPropertiesTest {
         Assert.assertEquals(Query.ExecuteOptions.IncludedFields.TYPE_AND_NAME, props.getIncludedFields());
         Assert.assertEquals(false, props.isIncludeAllFields());
 
-        // execute type and simple boolean cahce
+        // execute type and simple boolean cache
         Assert.assertEquals(Constants.QueryExecuteType.STREAM, props.getExecuteType());
         Assert.assertEquals(Constants.DEFAULT_EXECUTE_TYPE != Constants.QueryExecuteType.SIMPLE, props.isSimpleExecute());
 
         // tablet type and twopc
         Assert.assertEquals(Topodata.TabletType.BACKUP, props.getTabletType());
         Assert.assertEquals(true, props.getTwopcEnabled());
+    }
+
+    @Test
+    public void testTarget() throws SQLException {
+        ConnectionProperties props = new ConnectionProperties();
+
+        // Setting keyspace
+        Properties info = new Properties();
+        info.setProperty(Constants.Property.KEYSPACE, "test_keyspace");
+        props.initializeProperties(info);
+        Assert.assertEquals("target", "test_keyspace@master", props.getTarget());
+
+        // Setting keyspace and shard
+        info = new Properties();
+        info.setProperty(Constants.Property.KEYSPACE, "test_keyspace");
+        info.setProperty(Constants.Property.SHARD, "80-c0");
+        props.initializeProperties(info);
+        Assert.assertEquals("target", "test_keyspace:80-c0@master", props.getTarget());
+
+        // Setting tablet type
+        info = new Properties();
+        info.setProperty(Constants.Property.TABLET_TYPE, "replica");
+        props.initializeProperties(info);
+        Assert.assertEquals("target", "@replica", props.getTarget());
+
+        // Setting shard which will have no impact without keyspace
+        info = new Properties();
+        info.setProperty(Constants.Property.SHARD, "80-c0");
+        props.initializeProperties(info);
+        Assert.assertEquals("target", "@master", props.getTarget());
+
+        // Setting shard and tablet type. Shard will have no impact.
+        info = new Properties();
+        info.setProperty(Constants.Property.SHARD, "80-c0");
+        info.setProperty(Constants.Property.TABLET_TYPE, "replica");
+        props.initializeProperties(info);
+        Assert.assertEquals("target", "@replica", props.getTarget());
+
+        // Setting keyspace, shard and tablet type.
+        info = new Properties();
+        info.setProperty(Constants.Property.KEYSPACE, "test_keyspace");
+        info.setProperty(Constants.Property.SHARD, "80-c0");
+        info.setProperty(Constants.Property.TABLET_TYPE, "rdonly");
+        props.initializeProperties(info);
+        Assert.assertEquals("target", "test_keyspace:80-c0@rdonly", props.getTarget());
+
+        // Setting keyspace, shard, tablet type and target. Target supersede others.
+        info = new Properties();
+        info.setProperty(Constants.Property.KEYSPACE, "test_keyspace");
+        info.setProperty(Constants.Property.SHARD, "80-c0");
+        info.setProperty(Constants.Property.TABLET_TYPE, "rdonly");
+        info.setProperty(Constants.Property.TARGET, "dummy");
+        props.initializeProperties(info);
+        Assert.assertEquals("target", "dummy", props.getTarget());
     }
 }

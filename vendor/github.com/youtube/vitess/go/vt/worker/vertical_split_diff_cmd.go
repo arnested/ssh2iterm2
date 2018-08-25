@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -12,10 +24,10 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/wrangler"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/wrangler"
 )
 
 const verticalSplitDiffHTML = `
@@ -44,8 +56,11 @@ const verticalSplitDiffHTML2 = `
   <p>Shard involved: {{.Keyspace}}/{{.Shard}}</p>
   <h1>Vertical Split Diff Action</h1>
     <form action="/Diffs/VerticalSplitDiff" method="post">
-      <LABEL for="minHealthyRdonlyTablets">Minimum Number of required healthy RDONLY tablets: </LABEL>
-        <INPUT type="text" id="minHealthyRdonlyTablets" name="minHealthyRdonlyTablets" value="{{.DefaultMinHealthyRdonlyTablets}}"></BR>      <INPUT type="hidden" name="keyspace" value="{{.Keyspace}}"/>
+			<INPUT type="hidden" name="keyspace" value="{{.Keyspace}}"/>
+			<LABEL for="minHealthyRdonlyTablets">Minimum Number of required healthy RDONLY tablets: </LABEL>
+        <INPUT type="text" id="minHealthyRdonlyTablets" name="minHealthyRdonlyTablets" value="{{.DefaultMinHealthyRdonlyTablets}}"></BR>
+      <LABEL for="parallelDiffsCount">Number of tables to diff in parallel: </LABEL>
+        <INPUT type="text" id="parallelDiffsCount" name="parallelDiffsCount" value="{{.DefaultParallelDiffsCount}}"></BR>
       <INPUT type="hidden" name="shard" value="{{.Shard}}"/>
       <INPUT type="submit" name="submit" value="Vertical Split Diff"/>
     </form>
@@ -57,6 +72,7 @@ var verticalSplitDiffTemplate2 = mustParseTemplate("verticalSplitDiff2", vertica
 
 func commandVerticalSplitDiff(wi *Instance, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) (Worker, error) {
 	minHealthyRdonlyTablets := subFlags.Int("min_healthy_rdonly_tablets", defaultMinHealthyRdonlyTablets, "minimum number of healthy RDONLY tablets before taking out one")
+	parallelDiffsCount := subFlags.Int("parallel_diffs_count", defaultParallelDiffsCount, "number of tables to diff in parallel")
 	if err := subFlags.Parse(args); err != nil {
 		return nil, err
 	}
@@ -68,7 +84,7 @@ func commandVerticalSplitDiff(wi *Instance, wr *wrangler.Wrangler, subFlags *fla
 	if err != nil {
 		return nil, err
 	}
-	return NewVerticalSplitDiffWorker(wr, wi.cell, keyspace, shard, *minHealthyRdonlyTablets), nil
+	return NewVerticalSplitDiffWorker(wr, wi.cell, keyspace, shard, *minHealthyRdonlyTablets, *parallelDiffsCount), nil
 }
 
 // shardsWithTablesSources returns all the shards that have SourceShards set
@@ -157,6 +173,7 @@ func interactiveVerticalSplitDiff(ctx context.Context, wi *Instance, wr *wrangle
 		result["Keyspace"] = keyspace
 		result["Shard"] = shard
 		result["DefaultMinHealthyRdonlyTablets"] = fmt.Sprintf("%v", defaultMinHealthyRdonlyTablets)
+		result["DefaultParallelDiffsCount"] = fmt.Sprintf("%v", defaultParallelDiffsCount)
 		return nil, verticalSplitDiffTemplate2, result, nil
 	}
 
@@ -166,9 +183,14 @@ func interactiveVerticalSplitDiff(ctx context.Context, wi *Instance, wr *wrangle
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("cannot parse minHealthyRdonlyTablets: %s", err)
 	}
+	parallelDiffsCountStr := r.FormValue("parallelDiffsCount")
+	parallelDiffsCount, err := strconv.ParseInt(parallelDiffsCountStr, 0, 64)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("cannot parse parallelDiffsCount: %s", err)
+	}
 
 	// start the diff job
-	wrk := NewVerticalSplitDiffWorker(wr, wi.cell, keyspace, shard, int(minHealthyRdonlyTablets))
+	wrk := NewVerticalSplitDiffWorker(wr, wi.cell, keyspace, shard, int(minHealthyRdonlyTablets), int(parallelDiffsCount))
 	return wrk, nil, nil, nil
 }
 

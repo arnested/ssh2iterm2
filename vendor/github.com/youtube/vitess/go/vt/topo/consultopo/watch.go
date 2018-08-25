@@ -1,31 +1,41 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package consultopo
 
 import (
 	"flag"
-	"fmt"
 	"path"
 	"time"
 
 	"golang.org/x/net/context"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/youtube/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo"
 )
 
 var (
 	watchPollDuration = flag.Duration("topo_consul_watch_poll_duration", 30*time.Second, "time of the long poll for watch queries. Interrupting a watch may wait for up to that time.")
 )
 
-// Watch is part of the topo.Backend interface.
-func (s *Server) Watch(ctx context.Context, cell, filePath string) (*topo.WatchData, <-chan *topo.WatchData, topo.CancelFunc) {
+// Watch is part of the topo.Conn interface.
+func (s *Server) Watch(ctx context.Context, filePath string) (*topo.WatchData, <-chan *topo.WatchData, topo.CancelFunc) {
 	// Initial get.
-	c, err := s.clientForCell(ctx, cell)
-	if err != nil {
-		return &topo.WatchData{Err: fmt.Errorf("Watch cannot get cell: %v", err)}, nil, nil
-	}
-	nodePath := path.Join(c.root, filePath)
-
-	pair, _, err := c.kv.Get(nodePath, nil)
+	nodePath := path.Join(s.root, filePath)
+	pair, _, err := s.kv.Get(nodePath, nil)
 	if err != nil {
 		return &topo.WatchData{Err: err}, nil, nil
 	}
@@ -55,7 +65,7 @@ func (s *Server) Watch(ctx context.Context, cell, filePath string) (*topo.WatchD
 			// if it didn't change. So we just check for that
 			// and swallow the notifications when version matches.
 			waitIndex := pair.ModifyIndex
-			pair, _, err = c.kv.Get(nodePath, &api.QueryOptions{
+			pair, _, err = s.kv.Get(nodePath, &api.QueryOptions{
 				WaitIndex: waitIndex,
 				WaitTime:  *watchPollDuration,
 			})

@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package topotools
 
@@ -8,9 +20,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/topo"
 )
 
 // OverlappingShards contains sets of shards that overlap which each-other.
@@ -53,7 +65,7 @@ func OverlappingShardsForShard(os []*OverlappingShards, shardName string) *Overl
 // having 40-80, 40-60 and 40-50 in the same keyspace is not supported and
 // will return an error).
 // If shards don't perfectly overlap, they are not returned.
-func FindOverlappingShards(ctx context.Context, ts topo.Server, keyspace string) ([]*OverlappingShards, error) {
+func FindOverlappingShards(ctx context.Context, ts *topo.Server, keyspace string) ([]*OverlappingShards, error) {
 	shardMap, err := ts.FindAllShardsInKeyspace(ctx, keyspace)
 	if err != nil {
 		return nil, err
@@ -89,7 +101,7 @@ func findOverlappingShards(shardMap map[string]*topo.ShardInfo) ([]*OverlappingS
 			si := findIntersectingShard(shardMap, left)
 			if si != nil {
 				if intersect(si, right) {
-					return nil, fmt.Errorf("Shard %v intersects with more than one shard, this is not supported", si.ShardName)
+					return nil, fmt.Errorf("Shard %v intersects with more than one shard, this is not supported", si.ShardName())
 				}
 				foundOne = true
 				right = append(right, si)
@@ -99,7 +111,7 @@ func findOverlappingShards(shardMap map[string]*topo.ShardInfo) ([]*OverlappingS
 			si = findIntersectingShard(shardMap, right)
 			if si != nil {
 				if intersect(si, left) {
-					return nil, fmt.Errorf("Shard %v intersects with more than one shard, this is not supported", si.ShardName)
+					return nil, fmt.Errorf("Shard %v intersects with more than one shard, this is not supported", si.ShardName())
 				}
 				foundOne = true
 				left = append(left, si)

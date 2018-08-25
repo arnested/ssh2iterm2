@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package stats
 
@@ -12,7 +24,7 @@ import (
 
 func TestTimings(t *testing.T) {
 	clear()
-	tm := NewTimings("timings1")
+	tm := NewTimings("timings1", "help", "category")
 	tm.Add("tag1", 500*time.Microsecond)
 	tm.Add("tag1", 1*time.Millisecond)
 	tm.Add("tag2", 1*time.Millisecond)
@@ -24,7 +36,7 @@ func TestTimings(t *testing.T) {
 
 func TestMultiTimings(t *testing.T) {
 	clear()
-	mtm := NewMultiTimings("maptimings1", []string{"dim1", "dim2"})
+	mtm := NewMultiTimings("maptimings1", "help", []string{"dim1", "dim2"})
 	mtm.Add([]string{"tag1a", "tag1b"}, 500*time.Microsecond)
 	mtm.Add([]string{"tag1a", "tag1b"}, 1*time.Millisecond)
 	mtm.Add([]string{"tag2a", "tag2b"}, 1*time.Millisecond)
@@ -44,7 +56,7 @@ func TestTimingsHook(t *testing.T) {
 	})
 
 	name := "timings2"
-	v := NewTimings(name)
+	v := NewTimings(name, "help", "")
 	if gotname != name {
 		t.Errorf("got %q, want %q", gotname, name)
 	}

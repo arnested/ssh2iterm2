@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tabletmanager
 
@@ -16,16 +28,17 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
-	"github.com/youtube/vitess/go/vt/health"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletservermock"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/binlog/binlogplayer"
+	"vitess.io/vitess/go/vt/health"
+	"vitess.io/vitess/go/vt/mysqlctl/fakemysqldaemon"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver"
+	"vitess.io/vitess/go/vt/vttablet/tabletservermock"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func TestHealthRecordDeduplication(t *testing.T) {
@@ -133,7 +146,6 @@ func createTestAgent(ctx context.Context, t *testing.T, preStart func(*ActionAge
 		PortMap: map[string]int32{
 			"vt": port,
 		},
-		Ip:       "1.0.0.1",
 		Keyspace: "test_keyspace",
 		Shard:    "0",
 		Type:     topodatapb.TabletType_REPLICA,
@@ -142,7 +154,7 @@ func createTestAgent(ctx context.Context, t *testing.T, preStart func(*ActionAge
 		t.Fatalf("CreateTablet failed: %v", err)
 	}
 
-	mysqlDaemon := &mysqlctl.FakeMysqlDaemon{MysqlPort: 3306}
+	mysqlDaemon := &fakemysqldaemon.FakeMysqlDaemon{MysqlPort: 3306}
 	agent := NewTestActionAgent(ctx, ts, tabletAlias, port, 0, mysqlDaemon, preStart)
 
 	vtClientMocksChannel := make(chan *binlogplayer.VtClientMock, 1)
@@ -195,8 +207,11 @@ func TestHealthCheckControlsQueryService(t *testing.T) {
 	if ti.Type != topodatapb.TabletType_REPLICA {
 		t.Errorf("First health check failed to go to replica: %v", ti.Type)
 	}
-	if ti.PortMap["mysql"] != 3306 {
-		t.Errorf("First health check failed to update mysql port: %v", ti.PortMap["mysql"])
+	if port := topoproto.MysqlPort(ti.Tablet); port != 3306 {
+		t.Errorf("First health check failed to update mysql port: %v", port)
+	}
+	if !agent.gotMysqlPort {
+		t.Errorf("Healthcheck didn't record it updated the MySQL port.")
 	}
 	if !agent.QueryServiceControl.IsServing() {
 		t.Errorf("Query service should be running")
@@ -779,8 +794,8 @@ func TestStateChangeImmediateHealthBroadcast(t *testing.T) {
 		InsertID:     0,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeString([]byte("MariaDB/0-1-1234")),
-				sqltypes.MakeString([]byte("DontStart")),
+				sqltypes.NewVarBinary("MariaDB/0-1-1234"),
+				sqltypes.NewVarBinary("DontStart"),
 			},
 		},
 	})

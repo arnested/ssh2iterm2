@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 // This file contains all the types necessary to make
 // RPC calls to Vttablet.
 
@@ -16,6 +32,9 @@ message Target {
   string keyspace = 1;
   string shard = 2;
   topodata.TabletType tablet_type = 3;
+  // cell is used for routing queries between vtgate and vttablets. It
+  // is not used when Target is part of the Session sent by the client.
+  string cell = 4;
 }
 
 // VTGateCallerID is sent by VTGate to VTTablet to describe the
@@ -179,9 +198,13 @@ enum Type {
   // GEOMETRY specifies a GEOMETRY type.
   // Properties: 29, IsQuoted.
   GEOMETRY = 2077;
-  // JSON specified a JSON type.
+  // JSON specifies a JSON type.
   // Properties: 30, IsQuoted.
   JSON = 2078;
+  // EXPRESSION specifies a SQL expression.
+  // This type is for internal use only.
+  // Properties: 31, None.
+  EXPRESSION = 31;
 }
 
 // Value represents a typed value.
@@ -203,7 +226,8 @@ message BoundQuery {
   // sql is the SQL query to execute
   string sql = 1;
 
-  // bind_variables is a map of all bind variables to expand in the query
+  // bind_variables is a map of all bind variables to expand in the query.
+  // nil values are not allowed. Use NULL_TYPE to express a NULL value.
   map<string, BindVariable> bind_variables = 2;
 }
 
@@ -231,6 +255,45 @@ message ExecuteOptions {
   // field name, table name, etc. This is an optimization for high-QPS queries where
   // the client knows what it's getting
   IncludedFields included_fields = 4;
+
+  // client_rows_found specifies if rows_affected should return
+  // rows found instead of rows affected. Behavior is defined
+  // by MySQL's CLIENT_FOUND_ROWS flag.
+  bool client_found_rows = 5;
+
+  enum Workload {
+    UNSPECIFIED = 0;
+    OLTP = 1;
+    OLAP = 2;
+    DBA = 3;
+  }
+
+  // workload specifies the type of workload:
+  // OLTP: DMLs allowed, results have row count limit, and
+  // query timeouts are shorter.
+  // OLAP: DMLS not allowed, no limit on row count, timeouts
+  // can be as high as desired.
+  // DBA: no limit on rowcount or timeout, all queries allowed 
+  // but intended for long DMLs and DDLs.
+  Workload workload = 6;
+
+  // sql_select_limit sets an implicit limit on all select statements. Since
+  // vitess also sets a rowcount limit on queries, the smallest value wins.
+  int64 sql_select_limit = 8;
+
+  enum TransactionIsolation {
+    DEFAULT = 0;
+    REPEATABLE_READ = 1;
+    READ_COMMITTED = 2;
+    READ_UNCOMMITTED = 3;
+    SERIALIZABLE = 4;
+  }
+
+  TransactionIsolation transaction_isolation = 9;
+
+  // skip_query_plan_cache specifies if the query plan shoud be cached by vitess.
+  // By default all query plans are cached.
+  bool skip_query_plan_cache = 10;
 }
 
 // Field describes a single column returned by a query
@@ -394,6 +457,7 @@ message BeginRequest {
   vtrpc.CallerID effective_caller_id = 1;
   VTGateCallerID immediate_caller_id = 2;
   Target target = 3;
+  ExecuteOptions options = 4;
 }
 
 // BeginResponse is the returned value from Begin
@@ -635,7 +699,8 @@ message SplitQueryResponse {
 message StreamHealthRequest {
 }
 
-// RealtimeStats contains information about the tablet status
+// RealtimeStats contains information about the tablet status.
+// It is only valid for a single tablet.
 message RealtimeStats {
   // health_error is the last error we got from health check,
   // or empty is the server is healthy. This is used for subset selection,
@@ -671,10 +736,40 @@ message RealtimeStats {
   double qps = 6;
 }
 
-// StreamHealthResponse is streamed by StreamHealth on a regular basis
+// AggregateStats contains information about the health of a group of
+// tablets for a Target.  It is used to propagate stats from a vtgate
+// to another, or from the Gateway layer of a vtgate to the routing
+// layer.
+message AggregateStats {
+  // healthy_tablet_count is the number of healthy tablets in the group.
+  int32 healthy_tablet_count = 1;
+
+  // unhealthy_tablet_count is the number of unhealthy tablets in the group.
+  int32 unhealthy_tablet_count = 2;
+
+  // seconds_behind_master_min is the minimum of the
+  // seconds_behind_master values of the healthy tablets. It is unset
+  // if the tablet type is master.
+  uint32 seconds_behind_master_min = 3;
+
+  // seconds_behind_master_max is the maximum of the
+  // seconds_behind_master values of the healthy tablets. It is unset
+  // if the tablet type is master.
+  uint32 seconds_behind_master_max = 4;
+}
+
+// StreamHealthResponse is streamed by StreamHealth on a regular basis.
+// When StreamHealth is used between a vtgate and vttablet:
+// - target describes the tablet.
+// - realtime_stats is set.
+// - aggregate_stats is not set.
+// When StreamHealth is used between two vtgates:
+// - target describes the group of tablets.
+// - realtime_stats is not set.
+// - aggregate_stats is set.
 message StreamHealthResponse {
   // target is the current server type. Only queries with that exact Target
-  // record will be accepted.
+  // record will be accepted (the cell may not match, however).
   Target target = 1;
 
   // serving is true iff the tablet is serving. A tablet may not be serving
@@ -682,15 +777,47 @@ message StreamHealthResponse {
   // or if a replica should not be used because the keyspace is being resharded.
   bool serving = 2;
 
-  // tablet_externally_reparented_timestamp contains the last time
-  // tabletmanager.TabletExternallyReparented was called on this tablet,
-  // or 0 if it was never called. This is meant to differentiate two tablets
-  // that report a target.TabletType of MASTER, only the one with the latest
-  // timestamp should be trusted.
+  // tablet_externally_reparented_timestamp can be interpreted as the
+  // last time we knew that this tablet was the MASTER of this shard
+  // (if StreamHealthResponse describes a group of tablets, between
+  // two vtgates, only one master will be present in the group, and
+  // this is this master's value).
+  //
+  // It is used by vtgate when determining the current MASTER of a shard.
+  // If vtgate sees more than one MASTER tablet, this timestamp is used
+  // as tiebreaker where the MASTER with the highest timestamp wins.
+  // Another usage of this timestamp is in go/vt/vtgate/buffer to detect the end
+  // of a reparent (failover) and stop buffering.
+  //
+  // In practice, this field is set to:
+  // a) the last time the RPC tabletmanager.TabletExternallyReparented was
+  //    called on this tablet (usually done by an external failover tool e.g.
+  //    Orchestrator). The failover tool can call this as long as we are the
+  //    master i.e. even ages after the last reparent occurred.
+  // OR
+  // b) the last time an active reparent was executed through a vtctl command
+  //    (InitShardMaster, PlannedReparentShard, EmergencyReparentShard)
+  // OR
+  // c) the last time vttablet was started and it initialized its tablet type
+  //    as MASTER because it was recorded as the shard's current master in the
+  //    topology (see go/vt/vttablet/tabletmanager/init_tablet.go)
+  // OR
+  // d) 0 if the vttablet was never a MASTER.
   int64 tablet_externally_reparented_timestamp = 3;
 
-  // realtime_stats contains information about the tablet status
+  // realtime_stats contains information about the tablet status.
+  // It is only filled in if the information is about a tablet.
   RealtimeStats realtime_stats = 4;
+
+  // AggregateStats constains information about the group of tablet status.
+  // It is only filled in if the information is about a group of tablets.
+  AggregateStats aggregate_stats = 6;
+
+  // tablet_alias is the alias of the sending tablet. The discovery/healthcheck.go
+  // code uses it to verify that it's talking to the correct tablet and that it
+  // hasn't changed in the meantime e.g. due to tablet restarts where ports or
+  // ips have been reused but assigned differently.
+  topodata.TabletAlias tablet_alias = 5;
 }
 
 // UpdateStreamRequest is the payload for UpdateStream. At most one of

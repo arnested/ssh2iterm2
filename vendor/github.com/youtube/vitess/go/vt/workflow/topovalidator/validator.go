@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 // Package topovalidator contains a workflow that validates the
 // topology data. It is meant to detect and propose fixes for topology
 // problems. Ideally, the topology should always be
@@ -12,14 +28,14 @@ import (
 	"fmt"
 	"sync"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/log"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/workflow"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/workflow"
 
-	workflowpb "github.com/youtube/vitess/go/vt/proto/workflow"
+	workflowpb "vitess.io/vitess/go/vt/proto/workflow"
 )
 
 const (
@@ -39,7 +55,7 @@ func Register() {
 // Typically, it looks for something wrong, and if it finds anything, it registers a Fixer in the workflow.
 type Validator interface {
 	// Audit is called by the Workflow. It can add Fixer objects to the Workflow.
-	Audit(ctx context.Context, ts topo.Server, w *Workflow) error
+	Audit(ctx context.Context, ts *topo.Server, w *Workflow) error
 }
 
 // Fixer is the interface to implement to register a job capable of

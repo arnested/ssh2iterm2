@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package netutil contains network-related utility functions.
 package netutil
@@ -155,18 +167,22 @@ func FullyQualifiedHostnameOrPanic() string {
 	return hostname
 }
 
-// ResolveIPv4Addr resolves the address:port part into an IP address:port pair
-func ResolveIPv4Addr(addr string) (string, error) {
+// ResolveIPv4Addrs resolves the address:port part into IP address:port pairs
+func ResolveIPv4Addrs(addr string) ([]string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	ipAddrs, err := net.LookupIP(host)
+	result := make([]string, 0, len(ipAddrs))
 	for _, ipAddr := range ipAddrs {
 		ipv4 := ipAddr.To4()
 		if ipv4 != nil {
-			return net.JoinHostPort(ipv4.String(), port), nil
+			result = append(result, net.JoinHostPort(ipv4.String(), port))
 		}
 	}
-	return "", fmt.Errorf("no IPv4addr for name %v", host)
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no IPv4addr for name %v", host)
+	}
+	return result, nil
 }

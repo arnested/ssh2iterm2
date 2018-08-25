@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package tabletmanager
 
 import (
@@ -5,12 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/health"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
+	"vitess.io/vitess/go/vt/health"
+	"vitess.io/vitess/go/vt/mysqlctl/fakemysqldaemon"
 )
 
 func TestBasicMySQLReplicationLag(t *testing.T) {
-	mysqld := mysqlctl.NewFakeMysqlDaemon(nil)
+	mysqld := fakemysqldaemon.NewFakeMysqlDaemon(nil)
 	mysqld.Replicating = true
 	mysqld.SecondsBehindMaster = 10
 	slaveStopped := true
@@ -26,7 +42,7 @@ func TestBasicMySQLReplicationLag(t *testing.T) {
 }
 
 func TestNoKnownMySQLReplicationLag(t *testing.T) {
-	mysqld := mysqlctl.NewFakeMysqlDaemon(nil)
+	mysqld := fakemysqldaemon.NewFakeMysqlDaemon(nil)
 	mysqld.Replicating = false
 	slaveStopped := true
 
@@ -41,7 +57,7 @@ func TestNoKnownMySQLReplicationLag(t *testing.T) {
 }
 
 func TestExtrapolatedMySQLReplicationLag(t *testing.T) {
-	mysqld := mysqlctl.NewFakeMysqlDaemon(nil)
+	mysqld := fakemysqldaemon.NewFakeMysqlDaemon(nil)
 	mysqld.Replicating = true
 	mysqld.SecondsBehindMaster = 10
 	slaveStopped := true
@@ -69,7 +85,7 @@ func TestExtrapolatedMySQLReplicationLag(t *testing.T) {
 }
 
 func TestNoExtrapolatedMySQLReplicationLag(t *testing.T) {
-	mysqld := mysqlctl.NewFakeMysqlDaemon(nil)
+	mysqld := fakemysqldaemon.NewFakeMysqlDaemon(nil)
 	mysqld.Replicating = true
 	mysqld.SecondsBehindMaster = 10
 	slaveStopped := true

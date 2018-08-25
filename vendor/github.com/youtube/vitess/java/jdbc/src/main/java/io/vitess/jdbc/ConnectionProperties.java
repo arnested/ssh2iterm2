@@ -1,16 +1,37 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.jdbc;
 
-import io.vitess.proto.Query;
-import io.vitess.proto.Topodata;
-import io.vitess.util.Constants;
-import io.vitess.util.StringUtils;
 import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Field;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
+
+import io.vitess.proto.Query;
+import io.vitess.proto.Topodata;
+import io.vitess.util.Constants;
+import io.vitess.util.StringUtils;
+import java.util.function.Function;
 
 public class ConnectionProperties {
 
@@ -21,11 +42,16 @@ public class ConnectionProperties {
             // Generate property list for use in dynamically filling out values from Properties objects in
             // #initializeProperties below
             java.lang.reflect.Field[] declaredFields = ConnectionProperties.class.getDeclaredFields();
-            for (int i = 0; i < declaredFields.length; i++) {
-                if (ConnectionProperties.ConnectionProperty.class.isAssignableFrom(declaredFields[i].getType())) {
-                    PROPERTY_LIST.add(declaredFields[i]);
+            for (Field declaredField : declaredFields) {
+                if (ConnectionProperty.class.isAssignableFrom(declaredField.getType())) {
+                    PROPERTY_LIST.add(declaredField);
                 }
             }
+            Collections.sort(PROPERTY_LIST, new Comparator<Field>() {
+                @Override public int compare(Field o1, Field o2) {
+                    return o1.getName().compareTo(o2.getName());
+                }
+            });
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
@@ -51,6 +77,11 @@ public class ConnectionProperties {
         "Should the JDBC driver treat the MySQL type \"YEAR\" as a java.sql.Date, or as a SHORT?",
         true);
 
+    private EnumConnectionProperty<Constants.ZeroDateTimeBehavior> zeroDateTimeBehavior = new EnumConnectionProperty<>(
+        "zeroDateTimeBehavior",
+        "How should timestamps with format \"0000-00-00 00:00:00.0000\" be treated",
+        Constants.ZeroDateTimeBehavior.GARBLE);
+
     // Configs for handling irregular blobs, those with characters outside the typical 4-byte encodings
     private BooleanConnectionProperty useBlobToStoreUTF8OutsideBMP = new BooleanConnectionProperty(
         "useBlobToStoreUTF8OutsideBMP",
@@ -75,28 +106,94 @@ public class ConnectionProperties {
         null);
 
     // Vitess-specific configs
+    private StringConnectionProperty userName = new StringConnectionProperty(
+            Constants.Property.USERNAME,
+            "query will be executed via this user",
+            Constants.DEFAULT_USERNAME,
+            null);
+    private StringConnectionProperty target = new StringConnectionProperty(
+            Constants.Property.TARGET,
+            "Represents keyspace:shard@tabletType to be used to VTGates. keyspace, keyspace:shard, @tabletType all are optional.",
+            Constants.DEFAULT_TARGET,
+            null);
+    private StringConnectionProperty keyspace = new StringConnectionProperty(
+        Constants.Property.KEYSPACE,
+        "Targeted keyspace to execute queries on",
+        Constants.DEFAULT_KEYSPACE,
+        null);
+    private StringConnectionProperty catalog = new StringConnectionProperty(
+            Constants.Property.DBNAME,
+            "Database name in the keyspace",
+            Constants.DEFAULT_CATALOG,
+            null);
+    private StringConnectionProperty shard = new StringConnectionProperty(
+        Constants.Property.SHARD,
+        "Targeted shard in a given keyspace",
+        Constants.DEFAULT_SHARD,
+        null);
+    private EnumConnectionProperty<Topodata.TabletType> tabletType = new EnumConnectionProperty<>(
+        Constants.Property.TABLET_TYPE,
+        "Tablet Type to which Vitess will connect(master, replica, rdonly)",
+        Constants.DEFAULT_TABLET_TYPE);
+    private EnumConnectionProperty<Topodata.TabletType> oldTabletType = new EnumConnectionProperty<>(
+            Constants.Property.OLD_TABLET_TYPE,
+            "Deprecated Tablet Type to which Vitess will connect(master, replica, rdonly)",
+            Constants.DEFAULT_TABLET_TYPE);
     private EnumConnectionProperty<Constants.QueryExecuteType> executeType = new EnumConnectionProperty<>(
         Constants.Property.EXECUTE_TYPE,
         "Query execution type: simple or stream",
         Constants.DEFAULT_EXECUTE_TYPE);
     private BooleanConnectionProperty twopcEnabled = new BooleanConnectionProperty(
         Constants.Property.TWOPC_ENABLED,
-        "Whether to enable two-phased commit, for atomic distributed commits. See http://vitess.io/user-guide/twopc.html",
+        "Whether to enable two-phased commit, for atomic distributed commits. See http://vitess.io/user-guide/twopc/",
         false);
     private EnumConnectionProperty<Query.ExecuteOptions.IncludedFields> includedFields = new EnumConnectionProperty<>(
         Constants.Property.INCLUDED_FIELDS,
         "What fields to return from MySQL to the Driver. Limiting the fields returned can improve performance, but ALL is required for maximum JDBC API support",
         Constants.DEFAULT_INCLUDED_FIELDS);
-    private EnumConnectionProperty<Topodata.TabletType> tabletType = new EnumConnectionProperty<>(
-        Constants.Property.TABLET_TYPE,
-        "Tablet Type to which Vitess will connect(master, replica, rdonly)",
-        Constants.DEFAULT_TABLET_TYPE);
+    private EnumConnectionProperty<Query.ExecuteOptions.Workload> workload = new EnumConnectionProperty<>(
+        "workload",
+        "The workload type to use when executing queries",
+        Query.ExecuteOptions.Workload.UNSPECIFIED
+    );
+    private BooleanConnectionProperty useAffectedRows = new BooleanConnectionProperty(
+        "useAffectedRows",
+        "Don't set the CLIENT_FOUND_ROWS flag when connecting to the server. The vitess default (useAffectedRows=true) is the opposite of mysql-connector-j.",
+        true);
 
+    private BooleanConnectionProperty grpcRetriesEnabled = new BooleanConnectionProperty(
+        "grpcRetriesEnabled",
+        "If enabled, a gRPC interceptor will ensure retries happen in the case of TRANSIENT gRPC errors.",
+        true
+    );
+    private LongConnectionProperty grpcRetryInitialBackoffMillis = new LongConnectionProperty(
+        "grpcRetriesInitialBackoffMillis",
+        "If grpcRetriesEnabled is set, what is the initial backoff time in milliseconds for exponential retry backoff.",
+        10
+    );
+    private LongConnectionProperty grpcRetryMaxBackoffMillis = new LongConnectionProperty(
+        "grpcRetriesMaxBackoffMillis",
+        "If grpcRetriesEnabled is set, what is the maximum backoff time in milliseconds for exponential retry backoff. After this threshold, failures will propagate.",
+        TimeUnit.MINUTES.toMillis(2)
+    );
+    private DoubleConnectionProperty grpcRetryBackoffMultiplier = new DoubleConnectionProperty(
+        "grpcRetriesBackoffMultiplier",
+        "If grpcRetriesEnabled is set, what multiplier should be used to increase exponential backoff on each retry.",
+        1.6
+    );
     // TLS-related configs
     private BooleanConnectionProperty useSSL = new BooleanConnectionProperty(
         Constants.Property.USE_SSL,
         "Whether this connection should use transport-layer security",
         false);
+    private BooleanConnectionProperty refreshConnection = new BooleanConnectionProperty(
+        "refreshConnection",
+        "When enabled, the driver will monitor for changes to the keystore and truststore files. If any are detected, SSL-enabled connections will be recreated.",
+        false);
+    private LongConnectionProperty refreshSeconds = new LongConnectionProperty(
+        "refreshSeconds",
+        "How often in seconds the driver will monitor for changes to the keystore and truststore files, when refreshConnection is enabled.",
+        60);
     private StringConnectionProperty keyStore = new StringConnectionProperty(
         Constants.Property.KEYSTORE,
         "The Java .JKS keystore file to use when TLS is enabled",
@@ -136,13 +233,26 @@ public class ConnectionProperties {
         null,
         null);
 
+    private BooleanConnectionProperty treatUtilDateAsTimestamp = new BooleanConnectionProperty(
+        "treatUtilDateAsTimestamp",
+        "Should the driver treat java.util.Date as a TIMESTAMP for the purposes of PreparedStatement.setObject()",
+        true);
+
+    private LongConnectionProperty timeout = new LongConnectionProperty(
+        "timeout",
+        "The default timeout, in millis, to use for queries, connections, and transaction commit/rollback. Query timeout can be overridden by explicitly calling setQueryTimeout",
+        Constants.DEFAULT_TIMEOUT
+    );
+
     // Caching of some hot properties to avoid casting over and over
     private Topodata.TabletType tabletTypeCache;
     private Query.ExecuteOptions.IncludedFields includedFieldsCache;
+    private Query.ExecuteOptions executeOptionsCache;
     private boolean includeAllFieldsCache = true;
     private boolean twopcEnabledCache = false;
     private boolean simpleExecuteTypeCache = true;
     private String characterEncodingAsString = null;
+    private String userNameCache;
 
     void initializeProperties(Properties props) throws SQLException {
         Properties propsCopy = (Properties) props.clone();
@@ -165,6 +275,9 @@ public class ConnectionProperties {
         this.twopcEnabledCache = this.twopcEnabled.getValueAsBoolean();
         this.simpleExecuteTypeCache = this.executeType.getValueAsEnum() == Constants.QueryExecuteType.SIMPLE;
         this.characterEncodingAsString = this.characterEncoding.getValueAsString();
+        this.userNameCache = this.userName.getValueAsString();
+
+        setExecuteOptions();
     }
 
     /**
@@ -255,6 +368,10 @@ public class ConnectionProperties {
         this.utf8OutsideBmpExcludedColumnNamePattern.setValue(pattern);
     }
 
+    public Constants.ZeroDateTimeBehavior getZeroDateTimeBehavior() {
+        return zeroDateTimeBehavior.getValueAsEnum();
+    }
+
     public boolean getYearIsDateType() {
         return yearIsDateType.getValueAsBoolean();
     }
@@ -284,6 +401,37 @@ public class ConnectionProperties {
         this.includedFields.setValue(includedFields);
         this.includedFieldsCache = includedFields;
         this.includeAllFieldsCache = includedFields == Query.ExecuteOptions.IncludedFields.ALL;
+        this.setExecuteOptions();
+    }
+
+    public Query.ExecuteOptions.Workload getWorkload() {
+        return this.workload.getValueAsEnum();
+    }
+
+    public void setWorkload(Query.ExecuteOptions.Workload workload) {
+        this.workload.setValue(workload);
+        setExecuteOptions();
+    }
+
+    public boolean getUseAffectedRows() {
+        return useAffectedRows.getValueAsBoolean();
+    }
+
+    public void setUseAffectedRows(boolean useAffectedRows) {
+        this.useAffectedRows.setValue(useAffectedRows);
+        setExecuteOptions();
+    }
+
+    private void setExecuteOptions() {
+        this.executeOptionsCache = Query.ExecuteOptions.newBuilder()
+            .setIncludedFields(getIncludedFields())
+            .setWorkload(getWorkload())
+            .setClientFoundRows(!getUseAffectedRows())
+            .build();
+    }
+
+    public Query.ExecuteOptions getExecuteOptions() {
+        return this.executeOptionsCache;
     }
 
     public boolean getTwopcEnabled() {
@@ -317,8 +465,56 @@ public class ConnectionProperties {
         this.tabletTypeCache = this.tabletType.getValueAsEnum();
     }
 
+    public Boolean getGrpcRetriesEnabled() {
+        return grpcRetriesEnabled.getValueAsBoolean();
+    }
+
+    public void setGrpcRetriesEnabled(Boolean grpcRetriesEnabled) {
+        this.grpcRetriesEnabled.setValue(grpcRetriesEnabled);
+    }
+
+    public Long getGrpcRetryInitialBackoffMillis() {
+        return grpcRetryInitialBackoffMillis.getValueAsLong();
+    }
+
+    public void setGrpcRetryInitialBackoffMillis(Long grpcRetryInitialBackoffMillis) {
+        this.grpcRetryInitialBackoffMillis.setValue(grpcRetryInitialBackoffMillis);
+    }
+
+    public Long getGrpcRetryMaxBackoffMillis() {
+        return grpcRetryMaxBackoffMillis.getValueAsLong();
+    }
+
+    public void setGrpcRetryMaxBackoffMillis(Long grpcRetryMaxBackoffMillis) {
+        this.grpcRetryMaxBackoffMillis.setValue(grpcRetryMaxBackoffMillis);
+    }
+
+    public Double getGrpcRetryBackoffMultiplier() {
+        return grpcRetryBackoffMultiplier.getValueAsDouble();
+    }
+
+    public void setGrpcRetryBackoffMultiplier(DoubleConnectionProperty grpcRetryBackoffMultiplier) {
+        this.grpcRetryBackoffMultiplier = grpcRetryBackoffMultiplier;
+    }
+
     public boolean getUseSSL() {
         return useSSL.getValueAsBoolean();
+    }
+
+    public boolean getRefreshConnection() {
+        return refreshConnection.getValueAsBoolean();
+    }
+
+    public void setRefreshConnection(boolean refreshConnection) {
+        this.refreshConnection.setValue(refreshConnection);
+    }
+
+    public long getRefreshSeconds() {
+        return refreshSeconds.getValueAsLong();
+    }
+
+    public void setRefreshSeconds(long refreshSeconds) {
+        this.refreshSeconds.setValue(refreshSeconds);
     }
 
     public String getKeyStore() {
@@ -347,6 +543,58 @@ public class ConnectionProperties {
 
     public String getTrustAlias() {
         return trustAlias.getValueAsString();
+    }
+
+    public boolean getTreatUtilDateAsTimestamp() {
+        return treatUtilDateAsTimestamp.getValueAsBoolean();
+    }
+
+    public void setTreatUtilDateAsTimestamp(boolean treatUtilDateAsTimestamp) {
+        this.treatUtilDateAsTimestamp.setValue(treatUtilDateAsTimestamp);
+    }
+
+    public long getTimeout() {
+        return timeout.getValueAsLong();
+    }
+
+    public void setTimeout(long timeout) {
+        this.timeout.setValue(timeout);
+    }
+
+    public String getTarget() {
+        if(!StringUtils.isNullOrEmptyWithoutWS(target.getValueAsString())) {
+            return target.getValueAsString();
+        }
+        String targetString = "";
+        String keyspace = this.keyspace.getValueAsString();
+        if(!StringUtils.isNullOrEmptyWithoutWS(keyspace)) {
+            targetString += keyspace;
+            String shard = this.shard.getValueAsString();
+            if(!StringUtils.isNullOrEmptyWithoutWS(shard)) {
+                targetString += ":" + shard;
+            }
+        }
+        String tabletType = this.tabletType.getValueAsEnum().name();
+        if(!StringUtils.isNullOrEmptyWithoutWS(tabletType)) {
+            targetString += "@" + tabletType.toLowerCase();
+        }
+        return targetString;
+    }
+
+    @Deprecated
+    protected String getKeyspace() {
+        return this.keyspace.getValueAsString();
+    }
+    protected void setCatalog(String catalog) throws SQLException {
+        this.catalog.setValue(catalog);
+    }
+
+    protected String getCatalog() throws SQLException{
+        return this.catalog.getValueAsString();
+    }
+
+    protected String getUsername() {
+        return this.userNameCache;
     }
 
     abstract static class ConnectionProperty {
@@ -458,6 +706,64 @@ public class ConnectionProperties {
         }
     }
 
+    private static class LongConnectionProperty extends ConnectionProperty {
+
+        private LongConnectionProperty(String name, String description, long defaultValue) {
+            super(name, description, defaultValue);
+        }
+
+        @Override
+        void initializeFrom(String extractedValue) {
+            if (extractedValue != null) {
+                setValue(Long.parseLong(extractedValue));
+            } else {
+                this.valueAsObject = this.defaultValue;
+            }
+        }
+
+        @Override
+        String[] getAllowableValues() {
+            return null;
+        }
+
+        public void setValue(Long value) {
+            this.valueAsObject = value;
+        }
+
+        Long getValueAsLong() {
+            return valueAsObject == null ? null : (Long) valueAsObject;
+        }
+    }
+
+    private static class DoubleConnectionProperty extends ConnectionProperty {
+
+        private DoubleConnectionProperty(String name, String description, double defaultValue) {
+            super(name, description, defaultValue);
+        }
+
+        @Override
+        void initializeFrom(String extractedValue) {
+            if (extractedValue != null) {
+                setValue(Double.parseDouble(extractedValue));
+            } else {
+                this.valueAsObject = this.defaultValue;
+            }
+        }
+
+        @Override
+        String[] getAllowableValues() {
+            return null;
+        }
+
+        public void setValue(Double value) {
+            this.valueAsObject = value;
+        }
+
+        Double getValueAsDouble() {
+            return valueAsObject == null ? null : (Double) valueAsObject;
+        }
+    }
+
     private static class EnumConnectionProperty<T extends Enum<T>> extends ConnectionProperty {
 
         private final Class<T> clazz;
@@ -497,4 +803,5 @@ public class ConnectionProperties {
             return (T) valueAsObject;
         }
     }
+
 }

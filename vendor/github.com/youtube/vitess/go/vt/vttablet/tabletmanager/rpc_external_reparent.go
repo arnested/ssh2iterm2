@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package tabletmanager
 
@@ -9,25 +21,25 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/event"
-	"github.com/youtube/vitess/go/stats"
-	"github.com/youtube/vitess/go/trace"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/topotools/events"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/event"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/trace"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools/events"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
 	finalizeReparentTimeout = flag.Duration("finalize_external_reparent_timeout", 30*time.Second, "Timeout for the finalize stage of a fast external reparent reconciliation.")
 
-	externalReparentStats = stats.NewTimings("ExternalReparents", "NewMasterVisible", "FullRebuild")
+	externalReparentStats = stats.NewTimings("ExternalReparents", "External reparenting time", "stage", "NewMasterVisible", "FullRebuild")
 )
 
 // SetReparentFlags changes flag values. It should only be used in tests.
@@ -64,14 +76,17 @@ func (agent *ActionAgent) TabletExternallyReparented(ctx context.Context, extern
 		log.Warningf("fastTabletExternallyReparented: failed to read global shard record for %v/%v: %v", tablet.Keyspace, tablet.Shard, err)
 		return err
 	}
+
+	// The external failover tool told us that we are still the MASTER. Update the
+	// timestamp to the current time.
+	agent.setExternallyReparentedTime(startTime)
+
 	if topoproto.TabletAliasEqual(si.MasterAlias, tablet.Alias) {
 		// We may get called on the current master even when nothing has changed.
 		// If the global shard record is already updated, it means we successfully
 		// finished a previous reparent to this tablet.
 		return nil
 	}
-
-	agent.setLastReparentedTime(startTime)
 
 	// Create a reusable Reparent event with available info.
 	ev := &events.Reparent{
@@ -125,6 +140,7 @@ func (agent *ActionAgent) TabletExternallyReparented(ctx context.Context, extern
 func (agent *ActionAgent) finalizeTabletExternallyReparented(ctx context.Context, si *topo.ShardInfo, ev *events.Reparent) (err error) {
 	var wg sync.WaitGroup
 	var errs concurrency.AllErrorRecorder
+	var oldMasterTablet *topodatapb.Tablet
 	oldMasterAlias := si.MasterAlias
 
 	// Update the tablet records concurrently.
@@ -147,29 +163,23 @@ func (agent *ActionAgent) finalizeTabletExternallyReparented(ctx context.Context
 	if !topoproto.TabletAliasIsZero(oldMasterAlias) {
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			// Forcibly demote the old master in topology, since we can't rely on the
 			// old master to be up to change its own record.
-			oldMasterTablet, err := agent.TopoServer.UpdateTabletFields(ctx, oldMasterAlias,
+			var err error
+			oldMasterTablet, err = agent.TopoServer.UpdateTabletFields(ctx, oldMasterAlias,
 				func(tablet *topodatapb.Tablet) error {
 					tablet.Type = topodatapb.TabletType_REPLICA
 					return nil
 				})
 			if err != nil {
 				errs.RecordError(err)
-				wg.Done()
 				return
 			}
 
 			// We now know more about the old master, so add it to event data.
 			ev.OldMaster = *oldMasterTablet
-			wg.Done()
-
-			// Tell the old master to re-read its tablet record and change its state.
-			// We don't need to wait for it.
-			tmc := tmclient.NewTabletManagerClient()
-			if err := tmc.RefreshState(ctx, oldMasterTablet); err != nil {
-				log.Warningf("Error calling RefreshState on old master %v: %v", topoproto.TabletAliasString(oldMasterTablet.Alias), err)
-			}
 		}()
 	}
 
@@ -183,38 +193,64 @@ func (agent *ActionAgent) finalizeTabletExternallyReparented(ctx context.Context
 		return errs.Error()
 	}
 
-	// Update the master field in the global shard record. We don't use a lock
-	// here anymore. The lock was only to ensure that the global shard record
-	// didn't get modified between the time when we read it and the time when we
-	// write it back. Now we use an update loop pattern to do that instead.
-	event.DispatchUpdate(ev, "updating global shard record")
-	log.Infof("finalizeTabletExternallyReparented: updating global shard record if needed")
-	_, err = agent.TopoServer.UpdateShardFields(ctx, tablet.Keyspace, tablet.Shard, func(currentSi *topo.ShardInfo) error {
-		if topoproto.TabletAliasEqual(currentSi.MasterAlias, tablet.Alias) {
-			return topo.ErrNoUpdateNeeded
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		// Update the master field in the global shard record. We don't use a lock
+		// here anymore. The lock was only to ensure that the global shard record
+		// didn't get modified between the time when we read it and the time when we
+		// write it back. Now we use an update loop pattern to do that instead.
+		event.DispatchUpdate(ev, "updating global shard record")
+		log.Infof("finalizeTabletExternallyReparented: updating global shard record if needed")
+		_, err = agent.TopoServer.UpdateShardFields(ctx, tablet.Keyspace, tablet.Shard, func(currentSi *topo.ShardInfo) error {
+			if topoproto.TabletAliasEqual(currentSi.MasterAlias, tablet.Alias) {
+				return topo.ErrNoUpdateNeeded
+			}
+			if !topoproto.TabletAliasEqual(currentSi.MasterAlias, oldMasterAlias) {
+				log.Warningf("old master alias (%v) not found in the global Shard record i.e. it has changed in the meantime."+
+					" We're not overwriting the value with the new master (%v) because the current value is probably newer."+
+					" (initial Shard record = %#v, current Shard record = %#v)",
+					oldMasterAlias, tablet.Alias, si, currentSi)
+				return topo.ErrNoUpdateNeeded
+			}
+			currentSi.MasterAlias = tablet.Alias
+			return nil
+		})
+		if err != nil {
+			errs.RecordError(err)
 		}
-		if !topoproto.TabletAliasEqual(currentSi.MasterAlias, oldMasterAlias) {
-			log.Warningf("old master alias (%v) not found in the global Shard record i.e. it has changed in the meantime."+
-				" We're not overwriting the value with the new master (%v) because the current value is probably newer."+
-				" (initial Shard record = %#v, current Shard record = %#v)",
-				oldMasterAlias, tablet.Alias, si, currentSi)
-			return topo.ErrNoUpdateNeeded
-		}
-		currentSi.MasterAlias = tablet.Alias
-		return nil
-	})
-	if err != nil {
-		return err
+	}()
+	if !topoproto.TabletAliasIsZero(oldMasterAlias) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// Tell the old master to re-read its tablet record and change its state.
+			// We don't need to put error into errs if this fails, but we need to wait
+			// for it to make sure that old master tablet is not stuck in the MASTER
+			// state.
+			tmc := tmclient.NewTabletManagerClient()
+			if err := tmc.RefreshState(ctx, oldMasterTablet); err != nil {
+				log.Warningf("Error calling RefreshState on old master %v: %v", topoproto.TabletAliasString(oldMasterTablet.Alias), err)
+			}
+		}()
+	}
+
+	wg.Wait()
+	if errs.HasErrors() {
+		return errs.Error()
 	}
 
 	event.DispatchUpdate(ev, "finished")
 	return nil
 }
 
-// setLastReparentedTime remembers when we were first told we're the master.
+// setExternallyReparentedTime remembers the last time when we were told we're
+// the master.
 // If another tablet claims to be master and offers a more recent time,
 // that tablet will be trusted over us.
-func (agent *ActionAgent) setLastReparentedTime(t time.Time) {
+func (agent *ActionAgent) setExternallyReparentedTime(t time.Time) {
 	agent.mutex.Lock()
 	defer agent.mutex.Unlock()
 

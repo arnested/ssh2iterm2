@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package main
 
 import (
@@ -16,15 +32,15 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/golang/glog"
 	"github.com/samuel/go-zookeeper/zk"
 	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/exit"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo/zk2topo"
-	"github.com/youtube/vitess/go/vt/vtctld"
+	"vitess.io/vitess/go/exit"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo/zk2topo"
+	"vitess.io/vitess/go/vt/vtctl"
 )
 
 var doc = `
@@ -91,7 +107,7 @@ const (
 type cmdFunc func(ctx context.Context, subFlags *flag.FlagSet, args []string) error
 
 var cmdMap map[string]cmdFunc
-var zconn zk2topo.Conn
+var zconn *zk2topo.ZkConn
 
 func init() {
 	cmdMap = map[string]cmdFunc{
@@ -133,7 +149,7 @@ func main() {
 	args = args[1:]
 	cmd, ok := cmdMap[cmdName]
 	if !ok {
-		log.Fatalf("Unknown command %v", cmdName)
+		log.Exitf("Unknown command %v", cmdName)
 	}
 	subFlags := flag.NewFlagSet(cmdName, flag.ExitOnError)
 
@@ -520,7 +536,7 @@ func cmdCat(ctx context.Context, subFlags *flag.FlagSet, args []string) error {
 		}
 		decoded := ""
 		if *decodeProto {
-			decoded, err = vtctld.DecodeContent(zkPath, data)
+			decoded, err = vtctl.DecodeContent(zkPath, data)
 			if err != nil {
 				log.Warningf("cat: cannot proto decode %v: %v", zkPath, err)
 				decoded = string(data)

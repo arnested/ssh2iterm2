@@ -5,6 +5,9 @@
 # Equivalent of mysql_secure_installation
 ##########################################
 
+# Changes during the init db should not make it to the binlog.
+# They could potentially create errant transactions on replicas.
+SET sql_log_bin = 0;
 # Remove anonymous users.
 DELETE FROM mysql.user WHERE User = '';
 
@@ -44,6 +47,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, PROCESS, FILE,
   SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER
   ON *.* TO 'vt_app'@'localhost';
 
+# User for app debug traffic, with global read access.
+GRANT SELECT, SHOW DATABASES, PROCESS ON *.* TO 'vt_appdebug'@'localhost';
+
 # User for administrative operations that need to be executed as non-SUPER.
 # Same permissions as vt_app here.
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, PROCESS, FILE,
@@ -63,7 +69,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, PROCESS, FILE,
   SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER
   ON *.* TO 'vt_filtered'@'localhost';
 
-# User for Orchestrator (https://github.com/outbrain/orchestrator).
+# User for Orchestrator (https://github.com/github/orchestrator).
 GRANT SUPER, PROCESS, REPLICATION SLAVE, RELOAD
   ON *.* TO 'orc_client_user'@'%' IDENTIFIED BY 'orc_client_user_password';
 GRANT SELECT

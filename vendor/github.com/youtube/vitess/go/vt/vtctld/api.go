@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package vtctld
 
 import (
@@ -7,25 +23,25 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/acl"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/schemamanager"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/vtctl"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/workflow"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/acl"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/schemamanager"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vtctl"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/workflow"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	logutilpb "github.com/youtube/vitess/go/vt/proto/logutil"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	"vitess.io/vitess/go/vt/mysqlctl"
+	logutilpb "vitess.io/vitess/go/vt/proto/logutil"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -72,13 +88,6 @@ func handleCollection(collection string, getFunc func(*http.Request) (interface{
 			return fmt.Errorf("can't get %v: %v", collection, err)
 		}
 
-		// JSON marshals a nil slice as "null", but we prefer "[]".
-		if val := reflect.ValueOf(obj); val.Kind() == reflect.Slice && val.IsNil() {
-			w.Header().Set("Content-Type", jsonContentType)
-			w.Write([]byte("[]"))
-			return nil
-		}
-
 		// JSON encode response.
 		data, err := vtctl.MarshalJSON(obj)
 		if err != nil {
@@ -113,16 +122,7 @@ func unmarshalRequest(r *http.Request, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
 
-func addSrvkeyspace(ctx context.Context, ts topo.Server, cell, keyspace string, srvKeyspaces map[string]interface{}) error {
-	srvKeyspace, err := ts.GetSrvKeyspace(ctx, cell, keyspace)
-	if err != nil {
-		return fmt.Errorf("invalid keyspace name: %q ", keyspace)
-	}
-	srvKeyspaces[keyspace] = srvKeyspace
-	return nil
-}
-
-func initAPI(ctx context.Context, ts topo.Server, actions *ActionRepository, realtimeStats *realtimeStats) {
+func initAPI(ctx context.Context, ts *topo.Server, actions *ActionRepository, realtimeStats *realtimeStats) {
 	tabletHealthCache := newTabletHealthCache(ts)
 	tmClient := tmclient.NewTabletManagerClient()
 
@@ -241,10 +241,16 @@ func initAPI(ctx context.Context, ts topo.Server, actions *ActionRepository, rea
 			return nil, fmt.Errorf("can't get list of SrvKeyspaceNames for cell %q: GetSrvKeyspaceNames returned: %v", cell, err)
 		}
 		for _, keyspaceName := range keyspaceNamesList {
-			err := addSrvkeyspace(ctx, ts, cell, keyspaceName, srvKeyspaces)
+			srvKeyspace, err := ts.GetSrvKeyspace(ctx, cell, keyspaceName)
 			if err != nil {
-				return nil, err
+				// If a keyspace is in the process of being set up, it exists
+				// in the list of keyspaces but GetSrvKeyspace fails.
+				//
+				// Instead of returning this error, simply skip it in the
+				// loop so we still return the other valid keyspaces.
+				continue
 			}
+			srvKeyspaces[keyspaceName] = srvKeyspace
 		}
 		return srvKeyspaces, nil
 
@@ -500,7 +506,7 @@ func initAPI(ctx context.Context, ts topo.Server, actions *ActionRepository, rea
 		}
 
 		resp := make(map[string]interface{})
-		resp["activeReparents"] = !*vtctl.DisableActiveReparents
+		resp["activeReparents"] = !*mysqlctl.DisableActiveReparents
 		resp["showStatus"] = *enableRealtimeStats
 		resp["showTopologyCRUD"] = *showTopologyCRUD
 		resp["showWorkflows"] = *workflowManagerInit

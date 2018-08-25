@@ -1,12 +1,24 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package planbuilder
 
 import (
-	"github.com/youtube/vitess/go/vt/sqlparser"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/schema"
+	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
 )
 
 // GenerateFullQuery generates the full query from the ast.
@@ -57,7 +69,8 @@ func GenerateLimitQuery(selStmt sqlparser.SelectStatement) *sqlparser.ParsedQuer
 // GenerateInsertOuterQuery generates the outer query for inserts.
 func GenerateInsertOuterQuery(ins *sqlparser.Insert) *sqlparser.ParsedQuery {
 	buf := sqlparser.NewTrackedBuffer(nil)
-	buf.Myprintf("insert %v%sinto %v%v values %a",
+	buf.Myprintf("%s %v%sinto %v%v values %a",
+		ins.Action,
 		ins.Comments,
 		ins.Ignore,
 		ins.Table,
@@ -67,32 +80,26 @@ func GenerateInsertOuterQuery(ins *sqlparser.Insert) *sqlparser.ParsedQuery {
 	return buf.ParsedQuery()
 }
 
-// GenerateLoadMessagesQuery generates the query to load messages after insert.
-func GenerateLoadMessagesQuery(ins *sqlparser.Insert) *sqlparser.ParsedQuery {
-	buf := sqlparser.NewTrackedBuffer(nil)
-	buf.Myprintf("select time_next, epoch, id, message from %v where %a", ins.Table, ":#pk")
-	return buf.ParsedQuery()
-}
-
 // GenerateUpdateOuterQuery generates the outer query for updates.
-func GenerateUpdateOuterQuery(upd *sqlparser.Update) *sqlparser.ParsedQuery {
-	buf := sqlparser.NewTrackedBuffer(nil)
-	buf.Myprintf("update %v%v set %v where %a", upd.Comments, upd.Table, upd.Exprs, ":#pk")
+// If there is no custom formatting needed, formatter can be nil.
+func GenerateUpdateOuterQuery(upd *sqlparser.Update, aliased *sqlparser.AliasedTableExpr, formatter sqlparser.NodeFormatter) *sqlparser.ParsedQuery {
+	buf := sqlparser.NewTrackedBuffer(formatter)
+	buf.Myprintf("update %v%v set %v where %a%v", upd.Comments, aliased.RemoveHints(), upd.Exprs, ":#pk", upd.OrderBy)
 	return buf.ParsedQuery()
 }
 
 // GenerateDeleteOuterQuery generates the outer query for deletes.
-func GenerateDeleteOuterQuery(del *sqlparser.Delete) *sqlparser.ParsedQuery {
+func GenerateDeleteOuterQuery(del *sqlparser.Delete, aliased *sqlparser.AliasedTableExpr) *sqlparser.ParsedQuery {
 	buf := sqlparser.NewTrackedBuffer(nil)
-	buf.Myprintf("delete %vfrom %v where %a", del.Comments, del.Table, ":#pk")
+	buf.Myprintf("delete %vfrom %v where %a%v", del.Comments, aliased.RemoveHints(), ":#pk", del.OrderBy)
 	return buf.ParsedQuery()
 }
 
-// GenerateUpdateSubquery generates the subquery for updats.
-func GenerateUpdateSubquery(upd *sqlparser.Update, table *schema.Table) *sqlparser.ParsedQuery {
+// GenerateUpdateSubquery generates the subquery for updates.
+func GenerateUpdateSubquery(upd *sqlparser.Update, table *schema.Table, aliased *sqlparser.AliasedTableExpr) *sqlparser.ParsedQuery {
 	return GenerateSubquery(
 		table.Indexes[0].Columns,
-		upd.Table,
+		aliased,
 		upd.Where,
 		upd.OrderBy,
 		upd.Limit,
@@ -101,10 +108,10 @@ func GenerateUpdateSubquery(upd *sqlparser.Update, table *schema.Table) *sqlpars
 }
 
 // GenerateDeleteSubquery generates the subquery for deletes.
-func GenerateDeleteSubquery(del *sqlparser.Delete, table *schema.Table) *sqlparser.ParsedQuery {
+func GenerateDeleteSubquery(del *sqlparser.Delete, table *schema.Table, aliased *sqlparser.AliasedTableExpr) *sqlparser.ParsedQuery {
 	return GenerateSubquery(
 		table.Indexes[0].Columns,
-		&sqlparser.AliasedTableExpr{Expr: del.Table},
+		aliased,
 		del.Where,
 		del.OrderBy,
 		del.Limit,

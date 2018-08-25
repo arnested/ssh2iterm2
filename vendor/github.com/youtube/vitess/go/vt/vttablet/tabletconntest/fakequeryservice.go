@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package tabletconntest
 
 import (
@@ -9,13 +25,12 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/callerid"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/querytypes"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/callerid"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 // FakeQueryService implements a programmable fake for the query service
@@ -63,16 +78,19 @@ var TestTarget = &querypb.Target{
 	TabletType: topodatapb.TabletType_REPLICA,
 }
 
+// TestCallerID is a test caller id.
 var TestCallerID = &vtrpcpb.CallerID{
 	Principal:    "test_principal",
 	Component:    "test_component",
 	Subcomponent: "test_subcomponent",
 }
 
+// TestVTGateCallerID is a test vtgate caller id.
 var TestVTGateCallerID = &querypb.VTGateCallerID{
 	Username: "test_username",
 }
 
+// TestExecuteOptions is a test execute options.
 var TestExecuteOptions = &querypb.ExecuteOptions{
 	IncludedFields:    querypb.ExecuteOptions_TYPE_ONLY,
 	IncludeEventToken: true,
@@ -81,12 +99,14 @@ var TestExecuteOptions = &querypb.ExecuteOptions{
 		Shard:     "ssss",
 		Position:  "pppp",
 	},
+	ClientFoundRows: true,
 }
 
+// TestAsTransaction is a test 'asTransaction' flag.
 const TestAsTransaction bool = true
 
 func (f *FakeQueryService) checkTargetCallerID(ctx context.Context, name string, target *querypb.Target) {
-	if !reflect.DeepEqual(target, TestTarget) {
+	if !proto.Equal(target, TestTarget) {
 		f.t.Errorf("invalid Target for %v: got %#v expected %#v", name, target, TestTarget)
 	}
 
@@ -94,7 +114,7 @@ func (f *FakeQueryService) checkTargetCallerID(ctx context.Context, name string,
 	if ef == nil {
 		f.t.Errorf("no effective caller id for %v", name)
 	} else {
-		if !reflect.DeepEqual(ef, TestCallerID) {
+		if !proto.Equal(ef, TestCallerID) {
 			f.t.Errorf("invalid effective caller id for %v: got %v expected %v", name, ef, TestCallerID)
 		}
 	}
@@ -103,16 +123,17 @@ func (f *FakeQueryService) checkTargetCallerID(ctx context.Context, name string,
 	if im == nil {
 		f.t.Errorf("no immediate caller id for %v", name)
 	} else {
-		if !reflect.DeepEqual(im, TestVTGateCallerID) {
+		if !proto.Equal(im, TestVTGateCallerID) {
 			f.t.Errorf("invalid immediate caller id for %v: got %v expected %v", name, im, TestVTGateCallerID)
 		}
 	}
 }
 
+// BeginTransactionID is a test transaction id for Begin.
 const BeginTransactionID int64 = 9990
 
 // Begin is part of the queryservice.QueryService interface
-func (f *FakeQueryService) Begin(ctx context.Context, target *querypb.Target) (int64, error) {
+func (f *FakeQueryService) Begin(ctx context.Context, target *querypb.Target, options *querypb.ExecuteOptions) (int64, error) {
 	if f.HasBeginError {
 		return 0, f.TabletError
 	}
@@ -120,9 +141,13 @@ func (f *FakeQueryService) Begin(ctx context.Context, target *querypb.Target) (i
 		panic(fmt.Errorf("test-triggered panic"))
 	}
 	f.checkTargetCallerID(ctx, "Begin", target)
+	if !proto.Equal(options, TestExecuteOptions) {
+		f.t.Errorf("invalid Execute.ExecuteOptions: got %v expected %v", options, TestExecuteOptions)
+	}
 	return BeginTransactionID, nil
 }
 
+// CommitTransactionID is a test transaction id for Commit.
 const CommitTransactionID int64 = 999044
 
 // Commit is part of the queryservice.QueryService interface
@@ -140,6 +165,7 @@ func (f *FakeQueryService) Commit(ctx context.Context, target *querypb.Target, t
 	return nil
 }
 
+// RollbackTransactionID is a test transactin id for Rollback.
 const RollbackTransactionID int64 = 999044
 
 // Rollback is part of the queryservice.QueryService interface
@@ -157,6 +183,7 @@ func (f *FakeQueryService) Rollback(ctx context.Context, target *querypb.Target,
 	return nil
 }
 
+// Dtid is a test dtid
 const Dtid string = "aa"
 
 // Prepare is part of the queryservice.QueryService interface
@@ -210,6 +237,7 @@ func (f *FakeQueryService) RollbackPrepared(ctx context.Context, target *querypb
 	return nil
 }
 
+// Participants is a test list of 2pc participants.
 var Participants = []*querypb.Target{{
 	Keyspace: "ks0",
 	Shard:    "0",
@@ -217,6 +245,19 @@ var Participants = []*querypb.Target{{
 	Keyspace: "ks1",
 	Shard:    "1",
 }}
+
+// TargetsEqual returns true if the targets are equal.
+func TargetsEqual(t1, t2 []*querypb.Target) bool {
+	if len(t1) != len(t2) {
+		return false
+	}
+	for i, t := range t1 {
+		if !proto.Equal(t, t2[i]) {
+			return false
+		}
+	}
+	return true
+}
 
 // CreateTransaction is part of the queryservice.QueryService interface
 func (f *FakeQueryService) CreateTransaction(ctx context.Context, target *querypb.Target, dtid string, participants []*querypb.Target) (err error) {
@@ -230,7 +271,7 @@ func (f *FakeQueryService) CreateTransaction(ctx context.Context, target *queryp
 	if dtid != Dtid {
 		f.t.Errorf("CreateTransaction: invalid dtid: got %s expected %s", dtid, Dtid)
 	}
-	if !reflect.DeepEqual(participants, Participants) {
+	if !TargetsEqual(participants, Participants) {
 		f.t.Errorf("invalid CreateTransaction participants: got %v, expected %v", participants, Participants)
 	}
 	return nil
@@ -287,6 +328,7 @@ func (f *FakeQueryService) ConcludeTransaction(ctx context.Context, target *quer
 	return nil
 }
 
+// Metadata is a test metadata for 2pc transactions.
 var Metadata = &querypb.TransactionMetadata{
 	Dtid:         "aa",
 	State:        querypb.TransactionState_PREPARE,
@@ -309,17 +351,18 @@ func (f *FakeQueryService) ReadTransaction(ctx context.Context, target *querypb.
 	return Metadata, nil
 }
 
+// ExecuteQuery is a fake test query.
 const ExecuteQuery = "executeQuery"
 
-var ExecuteBindVars = map[string]interface{}{
-	"bind1": &querypb.BindVariable{
-		Type:  querypb.Type_INT64,
-		Value: []byte("1114444"),
-	},
+// ExecuteBindVars is a test bind var.
+var ExecuteBindVars = map[string]*querypb.BindVariable{
+	"bind1": sqltypes.Int64BindVariable(1114444),
 }
 
+// ExecuteTransactionID is a test transaction id.
 const ExecuteTransactionID int64 = 678
 
+// ExecuteQueryResult is a test query result.
 var ExecuteQueryResult = sqltypes.Result{
 	Fields: []*querypb.Field{
 		{
@@ -335,12 +378,12 @@ var ExecuteQueryResult = sqltypes.Result{
 	InsertID:     72,
 	Rows: [][]sqltypes.Value{
 		{
-			sqltypes.MakeTrusted(sqltypes.Int8, []byte("1")),
+			sqltypes.TestValue(sqltypes.Int8, "1"),
 			sqltypes.NULL,
 		},
 		{
-			sqltypes.MakeTrusted(sqltypes.Int8, []byte("2")),
-			sqltypes.MakeTrusted(sqltypes.Char, []byte("row2 value2")),
+			sqltypes.TestValue(sqltypes.Int8, "2"),
+			sqltypes.TestValue(sqltypes.Char, "row2 value2"),
 		},
 	},
 	Extras: &querypb.ResultExtras{
@@ -354,7 +397,7 @@ var ExecuteQueryResult = sqltypes.Result{
 }
 
 // Execute is part of the queryservice.QueryService interface
-func (f *FakeQueryService) Execute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, transactionID int64, options *querypb.ExecuteOptions) (*sqltypes.Result, error) {
+func (f *FakeQueryService) Execute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, transactionID int64, options *querypb.ExecuteOptions) (*sqltypes.Result, error) {
 	if f.HasError {
 		return nil, f.TabletError
 	}
@@ -364,7 +407,7 @@ func (f *FakeQueryService) Execute(ctx context.Context, target *querypb.Target, 
 	if sql != ExecuteQuery {
 		f.t.Errorf("invalid Execute.Query.Sql: got %v expected %v", sql, ExecuteQuery)
 	}
-	if !reflect.DeepEqual(bindVariables, ExecuteBindVars) {
+	if !sqltypes.BindVariablesEqual(bindVariables, ExecuteBindVars) {
 		f.t.Errorf("invalid Execute.BindVariables: got %v expected %v", bindVariables, ExecuteBindVars)
 	}
 	if !proto.Equal(options, TestExecuteOptions) {
@@ -377,15 +420,15 @@ func (f *FakeQueryService) Execute(ctx context.Context, target *querypb.Target, 
 	return &ExecuteQueryResult, nil
 }
 
+// StreamExecuteQuery is a fake test query for streaming.
 const StreamExecuteQuery = "streamExecuteQuery"
 
-var StreamExecuteBindVars = map[string]interface{}{
-	"bind1": &querypb.BindVariable{
-		Type:  querypb.Type_INT64,
-		Value: []byte("93848000"),
-	},
+// StreamExecuteBindVars is a test bind var for streaming.
+var StreamExecuteBindVars = map[string]*querypb.BindVariable{
+	"bind1": sqltypes.Int64BindVariable(93848000),
 }
 
+// StreamExecuteQueryResult1 is the first packet of a streaming result.
 var StreamExecuteQueryResult1 = sqltypes.Result{
 	Fields: []*querypb.Field{
 		{
@@ -399,28 +442,29 @@ var StreamExecuteQueryResult1 = sqltypes.Result{
 	},
 }
 
+// StreamExecuteQueryResult2 is the second packet of a streaming result.
 var StreamExecuteQueryResult2 = sqltypes.Result{
 	Rows: [][]sqltypes.Value{
 		{
-			sqltypes.MakeTrusted(sqltypes.Int8, []byte("1")),
-			sqltypes.MakeTrusted(sqltypes.Char, []byte("row1 value2")),
+			sqltypes.TestValue(sqltypes.Int8, "1"),
+			sqltypes.TestValue(sqltypes.Char, "row1 value2"),
 		},
 		{
-			sqltypes.MakeTrusted(sqltypes.Int8, []byte("2")),
-			sqltypes.MakeTrusted(sqltypes.Char, []byte("row2 value2")),
+			sqltypes.TestValue(sqltypes.Int8, "2"),
+			sqltypes.TestValue(sqltypes.Char, "row2 value2"),
 		},
 	},
 }
 
 // StreamExecute is part of the queryservice.QueryService interface
-func (f *FakeQueryService) StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions, callback func(*sqltypes.Result) error) error {
+func (f *FakeQueryService) StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, options *querypb.ExecuteOptions, callback func(*sqltypes.Result) error) error {
 	if f.Panics && f.StreamExecutePanicsEarly {
 		panic(fmt.Errorf("test-triggered panic early"))
 	}
 	if sql != StreamExecuteQuery {
 		f.t.Errorf("invalid StreamExecute.Sql: got %v expected %v", sql, StreamExecuteQuery)
 	}
-	if !reflect.DeepEqual(bindVariables, StreamExecuteBindVars) {
+	if !sqltypes.BindVariablesEqual(bindVariables, StreamExecuteBindVars) {
 		f.t.Errorf("invalid StreamExecute.BindVariables: got %v expected %v", bindVariables, StreamExecuteBindVars)
 	}
 	if !proto.Equal(options, TestExecuteOptions) {
@@ -448,29 +492,26 @@ func (f *FakeQueryService) StreamExecute(ctx context.Context, target *querypb.Ta
 	return nil
 }
 
-var ExecuteBatchQueries = []querytypes.BoundQuery{
+// ExecuteBatchQueries are test queries for batch.
+var ExecuteBatchQueries = []*querypb.BoundQuery{
 	{
 		Sql: "executeBatchQueries1",
-		BindVariables: map[string]interface{}{
-			"bind1": &querypb.BindVariable{
-				Type:  querypb.Type_INT64,
-				Value: []byte("43"),
-			},
+		BindVariables: map[string]*querypb.BindVariable{
+			"bind1": sqltypes.Int64BindVariable(43),
 		},
 	},
 	{
 		Sql: "executeBatchQueries2",
-		BindVariables: map[string]interface{}{
-			"bind2": &querypb.BindVariable{
-				Type:  querypb.Type_INT64,
-				Value: []byte("72"),
-			},
+		BindVariables: map[string]*querypb.BindVariable{
+			"bind2": sqltypes.Int64BindVariable(72),
 		},
 	},
 }
 
+// ExecuteBatchTransactionID is a test transaction id for batch.
 const ExecuteBatchTransactionID int64 = 678
 
+// ExecuteBatchQueryResultList is a list of test query results.
 var ExecuteBatchQueryResultList = []sqltypes.Result{
 	{
 		Fields: []*querypb.Field{
@@ -483,10 +524,10 @@ var ExecuteBatchQueryResultList = []sqltypes.Result{
 		InsertID:     712,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeTrusted(sqltypes.Int8, []byte("1")),
+				sqltypes.TestValue(sqltypes.Int8, "1"),
 			},
 			{
-				sqltypes.MakeTrusted(sqltypes.Int8, []byte("2")),
+				sqltypes.TestValue(sqltypes.Int8, "2"),
 			},
 		},
 		Extras: &querypb.ResultExtras{
@@ -509,24 +550,27 @@ var ExecuteBatchQueryResultList = []sqltypes.Result{
 		InsertID:     74442,
 		Rows: [][]sqltypes.Value{
 			{
-				sqltypes.MakeString([]byte("row1 value1")),
+				sqltypes.NewVarBinary("row1 value1"),
 			},
 			{
-				sqltypes.MakeString([]byte("row1 value2")),
+				sqltypes.NewVarBinary("row1 value2"),
 			},
 		},
 	},
 }
 
 // ExecuteBatch is part of the queryservice.QueryService interface
-func (f *FakeQueryService) ExecuteBatch(ctx context.Context, target *querypb.Target, queries []querytypes.BoundQuery, asTransaction bool, transactionID int64, options *querypb.ExecuteOptions) ([]sqltypes.Result, error) {
+func (f *FakeQueryService) ExecuteBatch(ctx context.Context, target *querypb.Target, queries []*querypb.BoundQuery, asTransaction bool, transactionID int64, options *querypb.ExecuteOptions) ([]sqltypes.Result, error) {
 	if f.HasError {
 		return nil, f.TabletError
 	}
 	if f.Panics {
 		panic(fmt.Errorf("test-triggered panic"))
 	}
-	if !reflect.DeepEqual(queries, ExecuteBatchQueries) {
+	if !proto.Equal(
+		&querypb.ExecuteBatchRequest{Queries: queries},
+		&querypb.ExecuteBatchRequest{Queries: ExecuteBatchQueries},
+	) {
 		f.t.Errorf("invalid ExecuteBatch.Queries: got %v expected %v", queries, ExecuteBatchQueries)
 	}
 	if !proto.Equal(options, TestExecuteOptions) {
@@ -542,34 +586,34 @@ func (f *FakeQueryService) ExecuteBatch(ctx context.Context, target *querypb.Tar
 	return ExecuteBatchQueryResultList, nil
 }
 
+// SplitQuerySplitColumns is a test list for column splits.
 var SplitQuerySplitColumns = []string{"nice_column_to_split"}
 
+// SplitQuerySplitCount is a test split count.
 const SplitQuerySplitCount = 372
 
-var SplitQueryBoundQuery = querytypes.BoundQuery{
+// SplitQueryBoundQuery is a test query for splits.
+var SplitQueryBoundQuery = &querypb.BoundQuery{
 	Sql: "splitQuery",
-	BindVariables: map[string]interface{}{
-		"bind1": &querypb.BindVariable{
-			Type:  querypb.Type_INT64,
-			Value: []byte("43"),
-		},
+	BindVariables: map[string]*querypb.BindVariable{
+		"bind1": sqltypes.Int64BindVariable(43),
 	},
 }
 
+// SplitQueryNumRowsPerQueryPart is a test num rows for split.
 const SplitQueryNumRowsPerQueryPart = 123
+
+// SplitQueryAlgorithm is a test algorithm for splits.
 const SplitQueryAlgorithm = querypb.SplitQueryRequest_FULL_SCAN
 
-var SplitQueryQuerySplitList = []querytypes.QuerySplit{
+// SplitQueryQuerySplitList is a test result for splits.
+var SplitQueryQuerySplitList = []*querypb.QuerySplit{
 	{
-		Sql: "splitQuery",
-		BindVariables: map[string]interface{}{
-			"bind1": &querypb.BindVariable{
-				Type:  querypb.Type_INT64,
-				Value: []byte("43"),
-			},
-			"keyspace_id": &querypb.BindVariable{
-				Type:  querypb.Type_INT64,
-				Value: []byte("3333"),
+		Query: &querypb.BoundQuery{
+			Sql: "splitQuery",
+			BindVariables: map[string]*querypb.BindVariable{
+				"bind1":       sqltypes.Int64BindVariable(43),
+				"keyspace_id": sqltypes.Int64BindVariable(3333),
 			},
 		},
 		RowCount: 4456,
@@ -577,8 +621,8 @@ var SplitQueryQuerySplitList = []querytypes.QuerySplit{
 }
 
 // BeginExecute combines Begin and Execute.
-func (f *FakeQueryService) BeginExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error) {
-	transactionID, err := f.Begin(ctx, target)
+func (f *FakeQueryService) BeginExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error) {
+	transactionID, err := f.Begin(ctx, target, options)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -588,8 +632,8 @@ func (f *FakeQueryService) BeginExecute(ctx context.Context, target *querypb.Tar
 }
 
 // BeginExecuteBatch combines Begin and ExecuteBatch.
-func (f *FakeQueryService) BeginExecuteBatch(ctx context.Context, target *querypb.Target, queries []querytypes.BoundQuery, asTransaction bool, options *querypb.ExecuteOptions) ([]sqltypes.Result, int64, error) {
-	transactionID, err := f.Begin(ctx, target)
+func (f *FakeQueryService) BeginExecuteBatch(ctx context.Context, target *querypb.Target, queries []*querypb.BoundQuery, asTransaction bool, options *querypb.ExecuteOptions) ([]sqltypes.Result, int64, error) {
+	transactionID, err := f.Begin(ctx, target, options)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -599,7 +643,10 @@ func (f *FakeQueryService) BeginExecuteBatch(ctx context.Context, target *queryp
 }
 
 var (
-	MessageName         = "vitess_message"
+	// MessageName is a test message name.
+	MessageName = "vitess_message"
+
+	// MessageStreamResult is a test stream result.
 	MessageStreamResult = &sqltypes.Result{
 		Fields: []*querypb.Field{{
 			Name: "id",
@@ -609,13 +656,15 @@ var (
 			Type: sqltypes.VarBinary,
 		}},
 		Rows: [][]sqltypes.Value{{
-			sqltypes.MakeTrusted(sqltypes.VarBinary, []byte("1")),
-			sqltypes.MakeTrusted(sqltypes.VarBinary, []byte("row1 value2")),
+			sqltypes.NewVarBinary("1"),
+			sqltypes.NewVarBinary("row1 value2"),
 		}, {
-			sqltypes.MakeTrusted(sqltypes.VarBinary, []byte("2")),
-			sqltypes.MakeTrusted(sqltypes.VarBinary, []byte("row2 value2")),
+			sqltypes.NewVarBinary("2"),
+			sqltypes.NewVarBinary("row2 value2"),
 		}},
 	}
+
+	// MessageIDs is a test list of message ids.
 	MessageIDs = []*querypb.Value{{
 		Type:  sqltypes.VarChar,
 		Value: []byte("1"),
@@ -648,7 +697,7 @@ func (f *FakeQueryService) MessageAck(ctx context.Context, target *querypb.Targe
 	if name != MessageName {
 		f.t.Errorf("name: %s, want %s", name, MessageName)
 	}
-	if !reflect.DeepEqual(ids, MessageIDs) {
+	if !sqltypes.Proto3ValuesEqual(ids, MessageIDs) {
 		f.t.Errorf("ids: %v, want %v", ids, MessageIDs)
 	}
 	return 1, nil
@@ -658,12 +707,12 @@ func (f *FakeQueryService) MessageAck(ctx context.Context, target *querypb.Targe
 func (f *FakeQueryService) SplitQuery(
 	ctx context.Context,
 	target *querypb.Target,
-	query querytypes.BoundQuery,
+	query *querypb.BoundQuery,
 	splitColumns []string,
 	splitCount int64,
 	numRowsPerQueryPart int64,
 	algorithm querypb.SplitQueryRequest_Algorithm,
-) ([]querytypes.QuerySplit, error) {
+) ([]*querypb.QuerySplit, error) {
 
 	if f.HasError {
 		return nil, f.TabletError
@@ -672,9 +721,9 @@ func (f *FakeQueryService) SplitQuery(
 		panic(fmt.Errorf("test-triggered panic"))
 	}
 	f.checkTargetCallerID(ctx, "SplitQuery", target)
-	if !reflect.DeepEqual(query, SplitQueryBoundQuery) {
+	if !proto.Equal(query, SplitQueryBoundQuery) {
 		f.t.Errorf("invalid SplitQuery.SplitQueryRequest.Query: got %v expected %v",
-			querytypes.QueryAsString(query.Sql, query.BindVariables), SplitQueryBoundQuery)
+			query, SplitQueryBoundQuery)
 	}
 	if !reflect.DeepEqual(splitColumns, SplitQuerySplitColumns) {
 		f.t.Errorf("invalid SplitQuery.SplitColumn: got %v expected %v",
@@ -695,6 +744,7 @@ func (f *FakeQueryService) SplitQuery(
 	return SplitQueryQuerySplitList, nil
 }
 
+// TestStreamHealthStreamHealthResponse is a test stream health response.
 var TestStreamHealthStreamHealthResponse = &querypb.StreamHealthResponse{
 	Target: &querypb.Target{
 		Keyspace:   "test_keyspace",
@@ -711,6 +761,8 @@ var TestStreamHealthStreamHealthResponse = &querypb.StreamHealthResponse{
 		CpuUsage: 1.0,
 	},
 }
+
+// TestStreamHealthErrorMsg is a test error message for health streaming.
 var TestStreamHealthErrorMsg = "to trigger a server error"
 
 // StreamHealth is part of the queryservice.QueryService interface
@@ -729,10 +781,13 @@ func (f *FakeQueryService) StreamHealth(ctx context.Context, callback func(*quer
 	return nil
 }
 
+// UpdateStreamPosition is a test update stream position.
 const UpdateStreamPosition = "update stream position"
 
+// UpdateStreamTimestamp is a test update stream timestamp.
 const UpdateStreamTimestamp = 123654
 
+// UpdateStreamStreamEvent1 is a test update stream event.
 var UpdateStreamStreamEvent1 = querypb.StreamEvent{
 	Statements: []*querypb.StreamEvent_Statement{
 		{
@@ -747,6 +802,7 @@ var UpdateStreamStreamEvent1 = querypb.StreamEvent{
 	},
 }
 
+// UpdateStreamStreamEvent2 is a test update stream event.
 var UpdateStreamStreamEvent2 = querypb.StreamEvent{
 	Statements: []*querypb.StreamEvent_Statement{
 		{

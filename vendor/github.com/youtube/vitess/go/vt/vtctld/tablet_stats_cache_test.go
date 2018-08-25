@@ -1,14 +1,29 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package vtctld
 
 import (
 	"reflect"
 	"testing"
 
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/proto/topodata"
+	"vitess.io/vitess/go/vt/discovery"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func TestStatsUpdate(t *testing.T) {
@@ -130,7 +145,7 @@ func TestHeatmapData(t *testing.T) {
 				{float64(ts2.Stats.SecondsBehindMaster), float64(ts4.Stats.SecondsBehindMaster)},
 				{float64(ts1.Stats.SecondsBehindMaster), float64(-1)},
 			},
-			Aliases: [][]*topodata.TabletAlias{
+			Aliases: [][]*topodatapb.TabletAlias{
 				{nil, ts9.Tablet.Alias},
 				{ts6.Tablet.Alias, ts8.Tablet.Alias},
 				{ts5.Tablet.Alias, nil},
@@ -177,7 +192,7 @@ func TestHeatmapData(t *testing.T) {
 				{float64(ts3.Stats.SecondsBehindMaster), float64(-1)},
 				{float64(ts2.Stats.SecondsBehindMaster), float64(ts4.Stats.SecondsBehindMaster)},
 			},
-			Aliases: [][]*topodata.TabletAlias{
+			Aliases: [][]*topodatapb.TabletAlias{
 				{ts5.Tablet.Alias, nil},
 				{ts3.Tablet.Alias, nil},
 				{ts2.Tablet.Alias, ts4.Tablet.Alias},
@@ -217,7 +232,7 @@ func TestHeatmapData(t *testing.T) {
 				{float64(ts11.Stats.SecondsBehindMaster), float64(ts13.Stats.SecondsBehindMaster)},
 				{float64(ts10.Stats.SecondsBehindMaster), float64(-1)},
 			},
-			Aliases: [][]*topodata.TabletAlias{
+			Aliases: [][]*topodatapb.TabletAlias{
 				{ts12.Tablet.Alias, nil},
 				{ts11.Tablet.Alias, ts13.Tablet.Alias},
 				{ts10.Tablet.Alias, nil},
@@ -297,7 +312,7 @@ func TestHeatmapData(t *testing.T) {
 			Data: [][]float64{
 				{float64(-1), float64(ts7.Stats.SecondsBehindMaster)},
 			},
-			Aliases: [][]*topodata.TabletAlias{
+			Aliases: [][]*topodatapb.TabletAlias{
 				{nil, ts7.Tablet.Alias},
 			},
 			CellAndTypeLabels: []yLabel{

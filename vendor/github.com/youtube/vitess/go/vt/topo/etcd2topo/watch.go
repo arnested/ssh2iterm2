@@ -1,26 +1,40 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package etcd2topo
 
 import (
 	"fmt"
 	"path"
+	"time"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo"
 )
 
-// Watch is part of the topo.Backend interface
-func (s *Server) Watch(ctx context.Context, cell, filePath string) (*topo.WatchData, <-chan *topo.WatchData, topo.CancelFunc) {
-	c, err := s.clientForCell(ctx, cell)
-	if err != nil {
-		return &topo.WatchData{Err: fmt.Errorf("Watch cannot get cell: %v", err)}, nil, nil
-	}
-	nodePath := path.Join(c.root, filePath)
+// Watch is part of the topo.Conn interface.
+func (s *Server) Watch(ctx context.Context, filePath string) (*topo.WatchData, <-chan *topo.WatchData, topo.CancelFunc) {
+	nodePath := path.Join(s.root, filePath)
 
 	// Get the initial version of the file
-	initial, err := s.global.cli.Get(ctx, nodePath)
+	initial, err := s.cli.Get(ctx, nodePath)
 	if err != nil {
 		// Generic error.
 		return &topo.WatchData{Err: convertError(err)}, nil, nil
@@ -40,7 +54,7 @@ func (s *Server) Watch(ctx context.Context, cell, filePath string) (*topo.WatchD
 	// Create the Watcher.  We start watching from the response we
 	// got, not from the file original version, as the server may
 	// not have that much history.
-	watcher := s.global.cli.Watch(watchCtx, nodePath, clientv3.WithRev(initial.Header.Revision))
+	watcher := s.cli.Watch(watchCtx, nodePath, clientv3.WithRev(initial.Header.Revision))
 	if watcher == nil {
 		return &topo.WatchData{Err: fmt.Errorf("Watch failed")}, nil, nil
 	}
@@ -50,15 +64,34 @@ func (s *Server) Watch(ctx context.Context, cell, filePath string) (*topo.WatchD
 	go func() {
 		defer close(notifications)
 
+		var currVersion = initial.Header.Revision
+		var watchRetries int
 		for {
 			select {
+
 			case <-watchCtx.Done():
 				// This includes context cancelation errors.
 				notifications <- &topo.WatchData{
 					Err: convertError(watchCtx.Err()),
 				}
 				return
-			case wresp := <-watcher:
+			case wresp, ok := <-watcher:
+				if !ok {
+					if watchRetries > 10 {
+						time.Sleep(time.Duration(watchRetries) * time.Second)
+					}
+					watchRetries++
+					newWatcher := s.cli.Watch(watchCtx, nodePath, clientv3.WithRev(currVersion))
+					if newWatcher == nil {
+						log.Warningf("watch %v failed and get a nil channel returned, currVersion: %v", nodePath, currVersion)
+					} else {
+						watcher = newWatcher
+					}
+					continue
+				}
+
+				watchRetries = 0
+
 				if wresp.Canceled {
 					// Final notification.
 					notifications <- &topo.WatchData{
@@ -66,6 +99,8 @@ func (s *Server) Watch(ctx context.Context, cell, filePath string) (*topo.WatchD
 					}
 					return
 				}
+
+				currVersion = wresp.Header.GetRevision()
 
 				for _, ev := range wresp.Events {
 					switch ev.Type {

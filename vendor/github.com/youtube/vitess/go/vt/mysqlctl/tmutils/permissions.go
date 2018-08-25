@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package tmutils contains helper methods to deal with the tabletmanagerdata
 // proto3 structures.
@@ -12,11 +24,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/concurrency"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
 )
 
 // This file contains helper methods to deal with Permissions.
@@ -52,16 +64,16 @@ func NewUserPermission(fields []*querypb.Field, values []sqltypes.Value) *tablet
 	for i, field := range fields {
 		switch strings.ToLower(field.Name) {
 		case "host":
-			up.Host = values[i].String()
+			up.Host = values[i].ToString()
 		case "user":
-			up.User = values[i].String()
+			up.User = values[i].ToString()
 		case "password":
-			up.PasswordChecksum = crc64.Checksum(([]byte)(values[i].String()), hashTable)
+			up.PasswordChecksum = crc64.Checksum(values[i].ToBytes(), hashTable)
 		case "password_last_changed":
 			// we skip this one, as the value may be
 			// different on master and slaves.
 		default:
-			up.Privileges[field.Name] = values[i].String()
+			up.Privileges[field.Name] = values[i].ToString()
 		}
 	}
 	return up
@@ -101,13 +113,13 @@ func NewDbPermission(fields []*querypb.Field, values []sqltypes.Value) *tabletma
 	for i, field := range fields {
 		switch field.Name {
 		case "Host":
-			up.Host = values[i].String()
+			up.Host = values[i].ToString()
 		case "Db":
-			up.Db = values[i].String()
+			up.Db = values[i].ToString()
 		case "User":
-			up.User = values[i].String()
+			up.User = values[i].ToString()
 		default:
-			up.Privileges[field.Name] = values[i].String()
+			up.Privileges[field.Name] = values[i].ToString()
 		}
 	}
 	return up
@@ -172,7 +184,7 @@ func diffPermissions(name, leftName string, left permissionList, rightName strin
 
 		// same name, let's see content
 		if lval != rval {
-			er.RecordError(fmt.Errorf("%v and %v disagree on %v %v:\n%v\n differs from:\n%v", leftName, rightName, name, lpk, lval, rval))
+			er.RecordError(fmt.Errorf("permissions differ on %v %v:\n%s: %v\n differs from:\n%s: %v", name, lpk, leftName, lval, rightName, rval))
 		}
 		leftIndex++
 		rightIndex++

@@ -1,22 +1,42 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package grpcbinlogplayer
 
 import (
-	"time"
-
 	"golang.org/x/net/context"
 
 	"google.golang.org/grpc"
 
-	"github.com/youtube/vitess/go/netutil"
-	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
+	"vitess.io/vitess/go/netutil"
+	"vitess.io/vitess/go/vt/binlog/binlogplayer"
+	"vitess.io/vitess/go/vt/grpcclient"
 
-	binlogdatapb "github.com/youtube/vitess/go/vt/proto/binlogdata"
-	binlogservicepb "github.com/youtube/vitess/go/vt/proto/binlogservice"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	"flag"
+
+	binlogdatapb "vitess.io/vitess/go/vt/proto/binlogdata"
+	binlogservicepb "vitess.io/vitess/go/vt/proto/binlogservice"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+)
+
+var (
+	cert = flag.String("binlog_player_grpc_cert", "", "the cert to use to connect")
+	key  = flag.String("binlog_player_grpc_key", "", "the key to use to connect")
+	ca   = flag.String("binlog_player_grpc_ca", "", "the server ca to use to validate servers when connecting")
+	name = flag.String("binlog_player_grpc_server_name", "", "the server name to use to validate server certificate")
 )
 
 // client implements a Client over go rpc
@@ -25,10 +45,14 @@ type client struct {
 	c  binlogservicepb.UpdateStreamClient
 }
 
-func (client *client) Dial(tablet *topodatapb.Tablet, connTimeout time.Duration) error {
+func (client *client) Dial(tablet *topodatapb.Tablet) error {
 	addr := netutil.JoinHostPort(tablet.Hostname, tablet.PortMap["grpc"])
 	var err error
-	client.cc, err = grpc.Dial(addr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(connTimeout))
+	opt, err := grpcclient.SecureDialOption(*cert, *key, *ca, *name)
+	if err != nil {
+		return err
+	}
+	client.cc, err = grpcclient.Dial(addr, grpcclient.FailFast(false), opt)
 	if err != nil {
 		return err
 	}

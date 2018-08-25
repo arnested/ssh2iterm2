@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 // Package discovery provides a way to discover all tablets e.g. within a
 // specific shard and monitor their current health.
 //
@@ -21,35 +37,44 @@
 package discovery
 
 import (
+	"bytes"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"html/template"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	log "github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/netutil"
-	"github.com/youtube/vitess/go/stats"
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletconn"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/netutil"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
+	"vitess.io/vitess/go/vt/vttablet/tabletconn"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
-	hcErrorCounters          = stats.NewMultiCounters("HealthcheckErrors", []string{"Keyspace", "ShardName", "TabletType"})
-	hcMasterPromotedCounters = stats.NewMultiCounters("HealthcheckMasterPromoted", []string{"Keyspace", "ShardName"})
+	hcErrorCounters          = stats.NewCountersWithMultiLabels("HealthcheckErrors", "Healthcheck Errors", []string{"Keyspace", "ShardName", "TabletType"})
+	hcMasterPromotedCounters = stats.NewCountersWithMultiLabels("HealthcheckMasterPromoted", "Master promoted in keyspace/shard name because of health check errors", []string{"Keyspace", "ShardName"})
+	healthcheckOnce          sync.Once
+	tabletURLTemplateString  = flag.String("tablet_url_template", "http://{{.GetTabletHostPort}}", "format string describing debug tablet url formatting. See the Go code for getTabletDebugURL() how to customize this.")
+	tabletURLTemplate        *template.Template
 )
 
 // See the documentation for NewHealthCheck below for an explanation of these parameters.
 const (
-	DefaultHealthCheckConnTimeout = 1 * time.Minute
-	DefaultHealthCheckRetryDelay  = 5 * time.Second
-	DefaultHealthCheckTimeout     = 1 * time.Minute
+	DefaultHealthCheckRetryDelay = 5 * time.Second
+	DefaultHealthCheckTimeout    = 1 * time.Minute
 )
 
 const (
@@ -83,8 +108,8 @@ const (
   </tr>
   {{range $i, $ts := .}}
   <tr>
-    <td>{{github_com_youtube_vitess_vtctld_srv_cell $ts.Cell}}</td>
-    <td>{{github_com_youtube_vitess_vtctld_srv_keyspace $ts.Cell $ts.Target.Keyspace}}</td>
+    <td>{{github_com_vitessio_vitess_vtctld_srv_cell $ts.Cell}}</td>
+    <td>{{github_com_vitessio_vitess_vtctld_srv_keyspace $ts.Cell $ts.Target.Keyspace}}</td>
     <td>{{$ts.Target.Shard}}</td>
     <td>{{$ts.Target.TabletType}}</td>
     <td>{{$ts.StatusAsHTML}}</td>
@@ -93,6 +118,20 @@ const (
 </table>
 `
 )
+
+func init() {
+	loadTabletURLTemplate()
+}
+
+// loadTabletURLTemplate loads or reloads the URL template.
+// Should only be used independently for testing.
+func loadTabletURLTemplate() {
+	tabletURLTemplate = template.New("")
+	_, err := tabletURLTemplate.Parse(*tabletURLTemplateString)
+	if err != nil {
+		log.Exitf("error parsing template: %v", err)
+	}
+}
 
 // HealthCheckStatsListener is the listener to receive health check stats update.
 type HealthCheckStatsListener interface {
@@ -164,6 +203,44 @@ func (e *TabletStats) DeepEqual(f *TabletStats) bool {
 			(e.LastError != nil && f.LastError != nil && e.LastError.Error() == f.LastError.Error()))
 }
 
+// GetTabletHostPort formats a tablet host port address.
+func (e TabletStats) GetTabletHostPort() string {
+	vtPort := e.Tablet.PortMap["vt"]
+	return netutil.JoinHostPort(e.Tablet.Hostname, vtPort)
+}
+
+// GetHostNameLevel returns the specified hostname level. If the level does not exist it will pick the closest level.
+// This seems unused but can be utilized by certain url formatting templates. See getTabletDebugURL for more details.
+func (e TabletStats) GetHostNameLevel(level int) string {
+	chunkedHostname := strings.Split(e.Tablet.Hostname, ".")
+
+	if level < 0 {
+		return chunkedHostname[0]
+	} else if level >= len(chunkedHostname) {
+		return chunkedHostname[len(chunkedHostname)-1]
+	} else {
+		return chunkedHostname[level]
+	}
+}
+
+// getTabletDebugURL formats a debug url to the tablet.
+// It uses a format string that can be passed into the app to format
+// the debug URL to accommodate different network setups. It applies
+// the html/template string defined to a TabletStats object. The
+// format string can refer to members and functions of TabletStats
+// like a regular html/template string.
+//
+// For instance given a tablet with hostname:port of host.dc.domain:22
+// could be configured as follows:
+// http://{{.GetTabletHostPort}} -> http://host.dc.domain:22
+// https://{{.Tablet.Hostname}} -> https://host.dc.domain
+// https://{{.GetHostNameLevel 0}}.bastion.corp -> https://host.bastion.corp
+func (e TabletStats) getTabletDebugURL() string {
+	var buffer bytes.Buffer
+	tabletURLTemplate.Execute(&buffer, e)
+	return buffer.String()
+}
+
 // HealthCheck defines the interface of health checking module.
 // The goal of this object is to maintain a StreamHealth RPC
 // to a lot of tablets. Tablets are added / removed by calling the
@@ -225,7 +302,9 @@ type healthCheckConn struct {
 	// Note tabletStats.Tablet and tabletStats.Name are immutable.
 	mu                    sync.RWMutex
 	conn                  queryservice.QueryService
+	streamCancelFunc      context.CancelFunc
 	tabletStats           TabletStats
+	loggedServingState    bool
 	lastResponseTimestamp time.Time // timestamp of the last healthcheck response
 }
 
@@ -234,7 +313,6 @@ type HealthCheckImpl struct {
 	// Immutable fields set at construction time.
 	listener           HealthCheckStatsListener
 	sendDownEvents     bool
-	connTimeout        time.Duration
 	retryDelay         time.Duration
 	healthCheckTimeout time.Duration
 	closeChan          chan struct{} // signals the process gorouting to terminate
@@ -255,15 +333,11 @@ type HealthCheckImpl struct {
 
 // NewDefaultHealthCheck creates a new HealthCheck object with a default configuration.
 func NewDefaultHealthCheck() HealthCheck {
-	return NewHealthCheck(
-		DefaultHealthCheckConnTimeout, DefaultHealthCheckRetryDelay, DefaultHealthCheckTimeout)
+	return NewHealthCheck(DefaultHealthCheckRetryDelay, DefaultHealthCheckTimeout)
 }
 
 // NewHealthCheck creates a new HealthCheck object.
 // Parameters:
-// connTimeout.
-//   The duration to wait until a health-check streaming connection is up.
-//   0 means it should establish the connection in the background and return immediately.
 // retryDelay.
 //   The duration to wait before retrying to connect (e.g. after a failed connection
 //   attempt).
@@ -271,10 +345,9 @@ func NewDefaultHealthCheck() HealthCheck {
 //   The duration for which we consider a health check response to be 'fresh'. If we don't get
 //   a health check response from a tablet for more than this duration, we consider the tablet
 //   not healthy.
-func NewHealthCheck(connTimeout, retryDelay, healthCheckTimeout time.Duration) HealthCheck {
+func NewHealthCheck(retryDelay, healthCheckTimeout time.Duration) HealthCheck {
 	hc := &HealthCheckImpl{
 		addrToConns:        make(map[string]*healthCheckConn),
-		connTimeout:        connTimeout,
 		retryDelay:         retryDelay,
 		healthCheckTimeout: healthCheckTimeout,
 		closeChan:          make(chan struct{}),
@@ -304,12 +377,36 @@ func NewHealthCheck(connTimeout, retryDelay, healthCheckTimeout time.Duration) H
 			}
 		}
 	}()
+
+	healthcheckOnce.Do(func() {
+		http.Handle("/debug/gateway", hc)
+	})
+
 	return hc
 }
 
 // RegisterStats registers the connection counts stats
 func (hc *HealthCheckImpl) RegisterStats() {
-	stats.NewMultiCountersFunc("HealthcheckConnections", []string{"Keyspace", "ShardName", "TabletType"}, hc.servingConnStats)
+	stats.NewGaugesFuncWithMultiLabels(
+		"HealthcheckConnections",
+		"the number of healthcheck connections registered",
+		[]string{"Keyspace", "ShardName", "TabletType"},
+		hc.servingConnStats)
+}
+
+// ServeHTTP is part of the http.Handler interface. It renders the current state of the discovery gateway tablet cache into json.
+func (hc *HealthCheckImpl) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	status := hc.cacheStatusMap()
+	b, err := json.MarshalIndent(status, "", " ")
+	if err != nil {
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	buf := bytes.NewBuffer(nil)
+	json.HTMLEscape(buf, b)
+	w.Write(buf.Bytes())
 }
 
 // servingConnStats returns the number of serving tablets per keyspace/shard/tablet type.
@@ -335,17 +432,21 @@ func (hc *HealthCheckImpl) servingConnStats() map[string]int64 {
 // checkConn().
 func (hc *HealthCheckImpl) finalizeConn(hcc *healthCheckConn) {
 	hcc.mu.Lock()
-	if hcc.conn != nil {
-		hcc.conn.Close(hcc.ctx)
-		hcc.conn = nil
-	}
+	hccConn := hcc.conn
+	hccCtx := hcc.ctx
+	hcc.conn = nil
 	hcc.tabletStats.Up = false
-	hcc.tabletStats.Serving = false
+	hcc.setServingState(false, "finalizeConn closing connection")
 	// Note: checkConn() exits only when hcc.ctx.Done() is closed. Thus it's
 	// safe to simply get Err() value here and assign to LastError.
 	hcc.tabletStats.LastError = hcc.ctx.Err()
 	ts := hcc.tabletStats
 	hcc.mu.Unlock()
+
+	if hccConn != nil {
+		hccConn.Close(hccCtx)
+	}
+
 	if hc.listener != nil {
 		hc.listener.StatsUpdate(&ts)
 	}
@@ -365,31 +466,67 @@ func (hc *HealthCheckImpl) checkConn(hcc *healthCheckConn, name string) {
 	}
 	hc.initialUpdatesWG.Done()
 
-	// Read stream health responses.
+	retryDelay := hc.retryDelay
 	for {
-		hcc.stream(hc, func(shr *querypb.StreamHealthResponse) error {
+		ctx, cancel := context.WithCancel(hcc.ctx)
+		hcc.mu.Lock()
+		hcc.streamCancelFunc = cancel
+		hcc.mu.Unlock()
+
+		// Read stream health responses.
+		hcc.stream(ctx, hc, func(shr *querypb.StreamHealthResponse) error {
+			// We received a message. Reset the back-off.
+			retryDelay = hc.retryDelay
 			return hcc.processResponse(hc, shr)
 		})
 
-		// Streaming RPC failed e.g. because vttablet was restarted.
+		// Streaming RPC failed e.g. because vttablet was restarted or took too long.
 		// Sleep until the next retry is up or the context is done/canceled.
 		select {
 		case <-hcc.ctx.Done():
 			return
-		case <-time.After(hc.retryDelay):
+		case <-time.After(retryDelay):
+			// Exponentially back-off to prevent tight-loop.
+			retryDelay *= 2
 		}
 	}
 }
 
+// setServingState sets the tablet state to the given value.
+//
+// If the state changes, it logs the change so that failures
+// from the health check connection are logged the first time,
+// but don't continue to log if the connection stays down.
+//
+// hcc.mu must be locked before calling this function
+func (hcc *healthCheckConn) setServingState(serving bool, reason string) {
+	if !hcc.loggedServingState || (serving != hcc.tabletStats.Serving) {
+		// Emit the log from a separate goroutine to avoid holding
+		// the hcc lock while logging is happening
+		go log.Infof("HealthCheckUpdate(Serving State): %v, tablet: %v serving => %v for %v/%v (%v) reason: %s",
+			hcc.tabletStats.Name,
+			topotools.TabletIdent(hcc.tabletStats.Tablet),
+			serving,
+			hcc.tabletStats.Tablet.GetKeyspace(),
+			hcc.tabletStats.Tablet.GetShard(),
+			hcc.tabletStats.Target.GetTabletType(),
+			reason,
+		)
+		hcc.loggedServingState = true
+	}
+
+	hcc.tabletStats.Serving = serving
+}
+
 // stream streams healthcheck responses to callback.
-func (hcc *healthCheckConn) stream(hc *HealthCheckImpl, callback func(*querypb.StreamHealthResponse) error) {
+func (hcc *healthCheckConn) stream(ctx context.Context, hc *HealthCheckImpl, callback func(*querypb.StreamHealthResponse) error) {
 	hcc.mu.Lock()
 	conn := hcc.conn
 	hcc.mu.Unlock()
 
 	if conn == nil {
 		var err error
-		conn, err = tabletconn.GetDialer()(hcc.tabletStats.Tablet, hc.connTimeout)
+		conn, err = tabletconn.GetDialer()(hcc.tabletStats.Tablet, grpcclient.FailFast(true))
 		if err != nil {
 			hcc.mu.Lock()
 			hcc.tabletStats.LastError = err
@@ -403,14 +540,18 @@ func (hcc *healthCheckConn) stream(hc *HealthCheckImpl, callback func(*querypb.S
 		hcc.mu.Unlock()
 	}
 
-	if err := conn.StreamHealth(hcc.ctx, callback); err != nil {
+	if err := conn.StreamHealth(ctx, callback); err != nil {
 		hcc.mu.Lock()
-		hcc.conn.Close(hcc.ctx)
 		hcc.conn = nil
-		hcc.tabletStats.Target = &querypb.Target{}
-		hcc.tabletStats.Serving = false
+		hcc.setServingState(false, err.Error())
 		hcc.tabletStats.LastError = err
+		ts := hcc.tabletStats
 		hcc.mu.Unlock()
+		// notify downstream for serving status change
+		if hc.listener != nil {
+			hc.listener.StatsUpdate(&ts)
+		}
+		conn.Close(ctx)
 		return
 	}
 	return
@@ -429,6 +570,10 @@ func (hcc *healthCheckConn) processResponse(hc *HealthCheckImpl, shr *querypb.St
 		return fmt.Errorf("health stats is not valid: %v", shr)
 	}
 
+	hcc.mu.RLock()
+	oldTs := hcc.tabletStats
+	hcc.mu.RUnlock()
+
 	// an app-level error from tablet, force serving state.
 	var healthErr error
 	serving := shr.Serving
@@ -437,16 +582,18 @@ func (hcc *healthCheckConn) processResponse(hc *HealthCheckImpl, shr *querypb.St
 		serving = false
 	}
 
+	// oldTs.Tablet.Alias.Uid may be 0 because the youtube internal mechanism uses a different
+	// code path to initialize this value. If so, we should skip this check.
+	if shr.TabletAlias != nil && oldTs.Tablet.Alias.Uid != 0 && !proto.Equal(shr.TabletAlias, oldTs.Tablet.Alias) {
+		return fmt.Errorf("health stats mismatch, tablet %+v alias does not match response alias %v", oldTs.Tablet, shr.TabletAlias)
+	}
+
 	// In the case where a tablet changes type (but not for the
 	// initial message), we want to log it, and maybe advertise it too.
 	if hcc.tabletStats.Target.TabletType != topodatapb.TabletType_UNKNOWN && hcc.tabletStats.Target.TabletType != shr.Target.TabletType {
-		// The Tablet type changed for the tablet. Get old value.
-		hcc.mu.RLock()
-		oldTs := hcc.tabletStats
-		hcc.mu.RUnlock()
-
 		// Log and maybe notify
-		log.Infof("HealthCheckUpdate(Type Change): %v, tablet: %v/%+v, target %+v => %+v, reparent time: %v", oldTs.Name, oldTs.Tablet.Alias.Cell, oldTs.Tablet, oldTs.Target, shr.Target, shr.TabletExternallyReparentedTimestamp)
+		log.Infof("HealthCheckUpdate(Type Change): %v, tablet: %s, target %+v => %+v, reparent time: %v",
+			oldTs.Name, topotools.TabletIdent(oldTs.Tablet), topotools.TargetIdent(oldTs.Target), topotools.TargetIdent(shr.Target), shr.TabletExternallyReparentedTimestamp)
 		if hc.listener != nil && hc.sendDownEvents {
 			oldTs.Up = false
 			hc.listener.StatsUpdate(&oldTs)
@@ -457,6 +604,12 @@ func (hcc *healthCheckConn) processResponse(hc *HealthCheckImpl, shr *querypb.St
 		if oldTs.Target.TabletType != topodatapb.TabletType_MASTER && shr.Target.TabletType == topodatapb.TabletType_MASTER {
 			hcMasterPromotedCounters.Add([]string{shr.Target.Keyspace, shr.Target.Shard}, 1)
 		}
+	}
+
+	// In this case where a new tablet is initialized or a tablet type changes, we want to
+	// initialize the counter so the rate can be calculated correctly.
+	if hcc.tabletStats.Target.TabletType != shr.Target.TabletType {
+		hcErrorCounters.Add([]string{shr.Target.Keyspace, shr.Target.Shard, topoproto.TabletTypeLString(shr.Target.TabletType)}, 0)
 	}
 
 	// Update our record, and notify downstream for tabletType and
@@ -475,10 +628,14 @@ func (hcc *healthCheckConn) update(shr *querypb.StreamHealthResponse, serving bo
 	defer hcc.mu.Unlock()
 	hcc.lastResponseTimestamp = time.Now()
 	hcc.tabletStats.Target = shr.Target
-	hcc.tabletStats.Serving = serving
 	hcc.tabletStats.TabletExternallyReparentedTimestamp = shr.TabletExternallyReparentedTimestamp
 	hcc.tabletStats.Stats = shr.RealtimeStats
 	hcc.tabletStats.LastError = healthErr
+	reason := "healthCheck update"
+	if healthErr != nil {
+		reason = "healthCheck update error: " + healthErr.Error()
+	}
+	hcc.setServingState(serving, reason)
 	return hcc.tabletStats
 }
 
@@ -515,8 +672,11 @@ func (hc *HealthCheckImpl) checkHealthCheckTimeout() {
 			hcc.mu.Unlock()
 			continue
 		}
-		hcc.tabletStats.Serving = false
+
+		//Timeout detected. Cancel the current streaming RPC and let checkConn() restart it.
+		hcc.streamCancelFunc()
 		hcc.tabletStats.LastError = fmt.Errorf("healthcheck timed out (latest %v)", hcc.lastResponseTimestamp)
+		hcc.setServingState(false, hcc.tabletStats.LastError.Error())
 		ts := hcc.tabletStats
 		hcc.mu.Unlock()
 		// notify downstream for serving status change
@@ -599,6 +759,14 @@ func (hc *HealthCheckImpl) RemoveTablet(tablet *topodatapb.Tablet) {
 	go hc.deleteConn(tablet)
 }
 
+// ReplaceTablet removes the old tablet and adds the new tablet.
+func (hc *HealthCheckImpl) ReplaceTablet(old, new *topodatapb.Tablet, name string) {
+	go func() {
+		hc.deleteConn(old)
+		hc.AddTablet(new, name)
+	}()
+}
+
 // WaitForInitialStatsUpdates waits until all tablets added via AddTablet() call
 // were propagated to downstream via corresponding StatsUpdate() calls.
 func (hc *HealthCheckImpl) WaitForInitialStatsUpdates() {
@@ -608,11 +776,12 @@ func (hc *HealthCheckImpl) WaitForInitialStatsUpdates() {
 // GetConnection returns the TabletConn of the given tablet.
 func (hc *HealthCheckImpl) GetConnection(key string) queryservice.QueryService {
 	hc.mu.RLock()
-	defer hc.mu.RUnlock()
 	hcc := hc.addrToConns[key]
 	if hcc == nil {
+		hc.mu.RUnlock()
 		return nil
 	}
+	hc.mu.RUnlock()
 	hcc.mu.RLock()
 	defer hcc.mu.RUnlock()
 	return hcc.conn
@@ -658,7 +827,6 @@ func (tcs *TabletsCacheStatus) StatusAsHTML() template.HTML {
 		sort.Sort(tcs.TabletsStats)
 	}
 	for _, ts := range tcs.TabletsStats {
-		vtPort := ts.Tablet.PortMap["vt"]
 		color := "green"
 		extra := ""
 		if ts.LastError != nil {
@@ -676,11 +844,10 @@ func (tcs *TabletsCacheStatus) StatusAsHTML() template.HTML {
 			extra = fmt.Sprintf(" (RepLag: %v)", ts.Stats.SecondsBehindMaster)
 		}
 		name := ts.Name
-		addr := netutil.JoinHostPort(ts.Tablet.Hostname, vtPort)
 		if name == "" {
-			name = addr
+			name = ts.GetTabletHostPort()
 		}
-		tLinks = append(tLinks, fmt.Sprintf(`<a href="http://%s" style="color:%v">%v</a>%v`, addr, color, name, extra))
+		tLinks = append(tLinks, fmt.Sprintf(`<a href="%s" style="color:%v">%v</a>%v`, ts.getTabletDebugURL(), color, name, extra))
 	}
 	return template.HTML(strings.Join(tLinks, "<br>"))
 }
@@ -706,11 +873,22 @@ func (tcsl TabletsCacheStatusList) Swap(i, j int) {
 
 // CacheStatus returns a displayable version of the cache.
 func (hc *HealthCheckImpl) CacheStatus() TabletsCacheStatusList {
+	tcsMap := hc.cacheStatusMap()
+	tcsl := make(TabletsCacheStatusList, 0, len(tcsMap))
+	for _, tcs := range tcsMap {
+		tcsl = append(tcsl, tcs)
+	}
+	sort.Sort(tcsl)
+	return tcsl
+}
+
+func (hc *HealthCheckImpl) cacheStatusMap() map[string]*TabletsCacheStatus {
 	tcsMap := make(map[string]*TabletsCacheStatus)
 	hc.mu.RLock()
+	defer hc.mu.RUnlock()
 	for _, hcc := range hc.addrToConns {
 		hcc.mu.RLock()
-		key := fmt.Sprintf("%v.%v.%v.%v", hcc.tabletStats.Tablet.Alias.Cell, hcc.tabletStats.Target.Keyspace, hcc.tabletStats.Target.Shard, string(hcc.tabletStats.Target.TabletType))
+		key := fmt.Sprintf("%v.%v.%v.%v", hcc.tabletStats.Tablet.Alias.Cell, hcc.tabletStats.Target.Keyspace, hcc.tabletStats.Target.Shard, hcc.tabletStats.Target.TabletType.String())
 		var tcs *TabletsCacheStatus
 		var ok bool
 		if tcs, ok = tcsMap[key]; !ok {
@@ -724,13 +902,7 @@ func (hc *HealthCheckImpl) CacheStatus() TabletsCacheStatusList {
 		hcc.mu.RUnlock()
 		tcs.TabletsStats = append(tcs.TabletsStats, &stats)
 	}
-	hc.mu.RUnlock()
-	tcsl := make(TabletsCacheStatusList, 0, len(tcsMap))
-	for _, tcs := range tcsMap {
-		tcsl = append(tcsl, tcs)
-	}
-	sort.Sort(tcsl)
-	return tcsl
+	return tcsMap
 }
 
 // Close stops the healthcheck.

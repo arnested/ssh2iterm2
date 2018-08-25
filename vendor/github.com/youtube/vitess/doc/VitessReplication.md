@@ -3,70 +3,16 @@
 ## Statement vs Row Based Replication
 
 MySQL supports two primary modes of replication in its binary logs: statement or
-row based.
+row based. Vitess supports both these modes.
 
-**Statement Based Replication**:
+For schema changes, if the number of affected rows is greater > 100k (configurable), we don't allow direct application
+of DDLs. The recommended tools in such cases are [gh-ost](https://github.com/github/gh-ost) or [pt-osc](https://www.percona.com/doc/percona-toolkit/LATEST/pt-online-schema-change.html).
 
-* The statements executed on the master are copied almost as-is in the master
-  logs.
-* The slaves replay these statements as is.
-* If the statements are expensive (especially an update with a complicated WHERE
-  clause), they will be expensive on the slaves too.
-* For current timestamp and auto-increment values, the master also puts
-  additional SET statements in the logs to make the statement have the same
-  effect, so the slaves end up with the same values.
+Not all statements are safe for Statement Based Replication (SBR): https://dev.mysql.com/doc/refman/8.0/en/replication-rbr-safe-unsafe.html. Vitess rewrites some of these statements to be safe for SBR, and others are explicitly failed. This is described in detail below.
 
-**Row Based Replication**:
-
-* The statements executed on the master result in updated rows. The new full
-  values for these rows are copied to the master logs.
-* The slaves change their records for the rows they receive. The update is by
-  primary key, and contains the new values for each column, so usually it’s very
-  fast.
-* Each updated row contains the entire row, not just the columns that were
-  updated (unless the flag --binlog\_row\_image=minimal is used).
-* The replication stream is harder to read, as it contains almost binary data,
-  that don’t easily map to the original statements.
-* There is a configurable limit on how many rows can be affected by one
-  binlog event, so the master logs are not flooded.
-* The format of the logs depends on the master schema: each row has a list of
-  values, one value for each column. So if the master schema is different from
-  the slave schema, updates will misbehave (exception being if slave has extra
-  columns at the end).
-* It is possible to revert to statement based replication for some commands to
-  avoid these drawbacks (for instance for DELETE statements that affect a large
-  number of rows).
-* Schema changes always use statement based replication.
-* If comments are added to a statement, they are stripped from the
-  replication stream (as only rows are transmitted). There is a flag
-  --binlog\_rows\_query\_log\_events to add the original statement to each row
-  update, but it is costly in terms of binlog size.
-
-For the longest time, MySQL replication has been single-threaded: only one
-statement is applied by the slaves at a time. Since the master applies more
-statements in parallel, replication can fall behind on the slaves fairly easily,
-under higher load. Even though the situation has improved (parallel slave
-apply), the slave replication speed is still a limiting factor for a lot of
-applications. Since row based replication achieves higher update rates on the
-slaves in most cases, it has been the only viable option for most performance
-sensitive applications.
-
-Schema changes however are not easy to achieve with row based
-replication. Adding columns can be done offline, but removing or changing
-columns cannot easily be done (there are multiple ways to achieve this, but they
-all have limitations or performance implications, and are not that easy to
-setup).
-
-Vitess helps by using statement based replication (therefore allowing complex
-schema changes), while at the same time simplifying the replication stream (so
-slaves can be fast), by rewriting Update statements.
-
-Then, with statement based replication, it becomes easier to perform offline
+With statement based replication, it becomes easier to perform offline
 advanced schema changes, or large data updates. Vitess’s solution is called
-schema swap.
-
-We plan to also support row based replication in the future, and adapt our tools
-to provide the same features when possible. See Appendix for our plan.
+schema swap (described below).
 
 ## Rewriting Update Statements
 
@@ -100,7 +46,7 @@ section below).
 
 Within YouTube, we also use a combination of statement based replication and
 backups to apply long-running schema changes without disrupting ongoing
-operations. See the [schema swap tutorial](/user-guide/schema-swap.html)
+operations. See the [schema swap tutorial]({% link user-guide/schema-swap.md %})
 for a detailed example.
 
 This operation, which is called **schema swap**, works as follows:
@@ -143,7 +89,7 @@ process!), this does not add much more complexity to a running system.
 Since the SBR replication stream also contains comments of which primary key is
 affected by a change, it is possible to look at the replication stream and know
 exactly what objects have changed. This Vitess feature is
-called [Update Stream](/user-guide/update-stream.html).
+called [Update Stream]({% link user-guide/update-stream.md %}).
 
 By subscribing to the Update Stream for a given shard, one can know what values
 change. This stream can be used to create a stream of data changes (export to an
@@ -153,7 +99,7 @@ Note: the Update Stream only reliably contains the primary key values of the
 rows that have changed, not the actual values for all columns. To get these
 values, it is necessary to re-query the database.
 
-We have plans to make this [Update Stream](/user-guide/update-stream.html)
+We have plans to make this [Update Stream]({% link user-guide/update-stream.md %})
 feature more consistent, very resilient, fast, and transparent to sharding.
 
 ## Semi-Sync
@@ -184,8 +130,8 @@ then the following will happen:
 These behaviors combine to give you the property that, in case of master
 failure, there is at least one other *replica* type slave that has every
 transaction that was ever reported to clients as having completed.
-You can then ([manually](http://vitess.io/reference/vtctl.html#emergencyreparentshard),
-or with an automated tool like [Orchestrator](https://github.com/outbrain/orchestrator))
+You can then ([manually]({% link reference/vtctl.md %}#emergencyreparentshard),
+or with an automated tool like [Orchestrator](https://github.com/github/orchestrator))
 pick the replica that is farthest ahead in GTID position and promote that to be
 the new master.
 
@@ -213,4 +159,4 @@ master.
 
 We are in the process of adding support for RBR in Vitess.
 
-See [this document](/user-guide/row-based-replication.html)) for more information.
+See [this document]({% link user-guide/row-based-replication.md %})) for more information.

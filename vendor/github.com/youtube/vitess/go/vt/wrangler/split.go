@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package wrangler
 
@@ -11,11 +23,13 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletconn"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vttablet/tabletconn"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 const (
@@ -39,7 +53,7 @@ func (wr *Wrangler) SetSourceShards(ctx context.Context, keyspace, shard string,
 	// So iterating over the sourceTablets map would be a bad idea.
 	sourceShards := make([]*topodatapb.Shard_SourceShard, len(sourceTablets))
 	for i, alias := range sources {
-		ti := sourceTablets[*alias]
+		ti := sourceTablets[topoproto.TabletAliasString(alias)]
 		sourceShards[i] = &topodatapb.Shard_SourceShard{
 			Uid:      uint32(i),
 			Keyspace: ti.Keyspace,
@@ -88,7 +102,7 @@ func (wr *Wrangler) WaitForFilteredReplication(ctx context.Context, keyspace, sh
 		return fmt.Errorf("failed to run explicit healthcheck on tablet: %v err: %v", tabletInfo, err)
 	}
 
-	conn, err := tabletconn.GetDialer()(tabletInfo.Tablet, 30*time.Second)
+	conn, err := tabletconn.GetDialer()(tabletInfo.Tablet, grpcclient.FailFast(false))
 	if err != nil {
 		return fmt.Errorf("cannot connect to tablet %v: %v", alias, err)
 	}

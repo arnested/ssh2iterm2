@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 /*
 Package tabletmanager exports the ActionAgent object. It keeps the local tablet
@@ -26,35 +38,35 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
-	"net"
 	"os"
 	"path"
 	"regexp"
 	"sync"
 	"time"
 
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/history"
-	"github.com/youtube/vitess/go/netutil"
-	"github.com/youtube/vitess/go/stats"
-	"github.com/youtube/vitess/go/vt/binlog"
-	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
-	"github.com/youtube/vitess/go/vt/dbconfigs"
-	"github.com/youtube/vitess/go/vt/health"
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/mysqlctl"
-	"github.com/youtube/vitess/go/vt/servenv"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletservermock"
+	"vitess.io/vitess/go/history"
+	"vitess.io/vitess/go/netutil"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/vt/binlog"
+	"vitess.io/vitess/go/vt/binlog/binlogplayer"
+	"vitess.io/vitess/go/vt/dbconfigs"
+	"vitess.io/vitess/go/vt/health"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/mysqlctl"
+	"vitess.io/vitess/go/vt/servenv"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver"
+	"vitess.io/vitess/go/vt/vttablet/tabletservermock"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 const (
@@ -73,7 +85,7 @@ type ActionAgent struct {
 	QueryServiceControl tabletserver.Controller
 	UpdateStream        binlog.UpdateStreamControl
 	HealthReporter      health.Reporter
-	TopoServer          topo.Server
+	TopoServer          *topo.Server
 	TabletAlias         *topodatapb.TabletAlias
 	MysqlDaemon         mysqlctl.MysqlDaemon
 	DBConfigs           dbconfigs.DBConfigs
@@ -85,12 +97,6 @@ type ActionAgent struct {
 	// statsTabletType is set to expose the current tablet type,
 	// only used if exportStats is true.
 	statsTabletType *stats.String
-
-	// skipMysqlPortCheck is set when we don't want healthcheck to
-	// alter the mysql port of the Tablet record. This is used by
-	// vtcombo, because we dont configure the 'dba' pool, used to
-	// get the mysql port.
-	skipMysqlPortCheck bool
 
 	// batchCtx is given to the agent by its creator, and should be used for
 	// any background tasks spawned by the agent.
@@ -108,6 +114,27 @@ type ActionAgent struct {
 	// both agent.actionMutex and agent.mutex needs to be taken,
 	// take actionMutex first.
 	actionMutex sync.Mutex
+
+	// actionMutexLocked is set to true after we acquire actionMutex,
+	// and reset to false when we release it.
+	// It is meant as a sanity check to make sure the methods that need
+	// to have the actionMutex have it.
+	actionMutexLocked bool
+
+	// waitingForMysql is set to true if mysql is not up when we
+	// start. That way, we only log once that we're waiting for
+	// mysql.  It is protected by actionMutex.
+	waitingForMysql bool
+
+	// gotMysqlPort is set when we got the current MySQL port and
+	// successfully saved it into the topology. That way we don't
+	// keep writing to the topology server on every heartbeat, but we
+	// know to try again if we fail to get it.
+	// We clear it when the tablet goes from unhealthy to healthy,
+	// so we are sure to get the up-to-date version in case of
+	// a MySQL server restart.
+	// It is protected by actionMutex.
+	gotMysqlPort bool
 
 	// initReplication remembers whether an action has initialized
 	// replication.  It is protected by actionMutex.
@@ -147,10 +174,6 @@ type ActionAgent struct {
 	// blacklisting.
 	_blacklistedTables []string
 
-	// set to true if mysql is not up when we start. That way, we
-	// only log once that we'r waiting for mysql.
-	_waitingForMysql bool
-
 	// if the agent is healthy, this is nil. Otherwise it contains
 	// the reason we're not healthy.
 	_healthy error
@@ -180,7 +203,7 @@ type ActionAgent struct {
 // it spawns.
 func NewActionAgent(
 	batchCtx context.Context,
-	ts topo.Server,
+	ts *topo.Server,
 	mysqld mysqlctl.MysqlDaemon,
 	queryServiceControl tabletserver.Controller,
 	tabletAlias *topodatapb.TabletAlias,
@@ -224,21 +247,33 @@ func NewActionAgent(
 	servenv.OnTerm(agent.BinlogPlayerMap.StopAllPlayersAndReset)
 	RegisterBinlogPlayerMap(agent.BinlogPlayerMap)
 
-	// try to figure out the mysql port
-	mysqlPort := mycnf.MysqlPort
-	if mysqlPort == 0 {
-		// we don't know the port, try to get it from mysqld
-		var err error
-		mysqlPort, err = mysqld.GetMysqlPort()
-		if err != nil {
-			log.Warningf("Cannot get current mysql port, will use 0 for now: %v", err)
+	var mysqlHost string
+	var mysqlPort int32
+	if dbcfgs.App.Host != "" {
+		mysqlHost = dbcfgs.App.Host
+		mysqlPort = int32(dbcfgs.App.Port)
+	} else {
+		// Assume unix socket was specified and try to figure out the mysql port
+		// by other means.
+		mysqlPort = mycnf.MysqlPort
+		if mysqlPort == 0 {
+			// we don't know the port, try to get it from mysqld
+			var err error
+			mysqlPort, err = mysqld.GetMysqlPort()
+			if err != nil {
+				log.Warningf("Cannot get current mysql port, will use 0 for now: %v", err)
+			}
 		}
 	}
 
 	// Start will get the tablet info, and update our state from it
-	if err := agent.Start(batchCtx, int32(mysqlPort), port, gRPCPort, true); err != nil {
+	if err := agent.Start(batchCtx, mysqlHost, int32(mysqlPort), port, gRPCPort, true); err != nil {
 		return nil, err
 	}
+
+	// Run a background task to rebuild the SrvKeyspace in our cell/keyspace
+	// if it doesn't exist yet.
+	go agent.maybeRebuildKeyspace(agent.initialTablet.Alias.Cell, agent.initialTablet.Keyspace)
 
 	// register the RPC services from the agent
 	servenv.OnRun(func() {
@@ -255,17 +290,22 @@ func NewActionAgent(
 			// (same as if it was triggered remotely)
 			if err := agent.RestoreData(batchCtx, logutil.NewConsoleLogger(), false /* deleteBeforeRestore */); err != nil {
 				println(fmt.Sprintf("RestoreFromBackup failed: %v", err))
-				log.Fatalf("RestoreFromBackup failed: %v", err)
+				log.Exitf("RestoreFromBackup failed: %v", err)
 			}
 
 			// after the restore is done, start health check
 			agent.initHealthCheck()
 		}()
 	} else {
-		// update our state
-		if err := agent.refreshTablet(batchCtx, "Start"); err != nil {
+		// Update our state (need the action lock).
+		if err := agent.lock(batchCtx); err != nil {
 			return nil, err
 		}
+		if err := agent.refreshTablet(batchCtx, "Start"); err != nil {
+			agent.unlock()
+			return nil, err
+		}
+		agent.unlock()
 
 		// synchronously start health check if needed
 		agent.initHealthCheck()
@@ -281,7 +321,7 @@ func NewActionAgent(
 
 // NewTestActionAgent creates an agent for test purposes. Only a
 // subset of features are supported now, but we'll add more over time.
-func NewTestActionAgent(batchCtx context.Context, ts topo.Server, tabletAlias *topodatapb.TabletAlias, vtPort, grpcPort int32, mysqlDaemon mysqlctl.MysqlDaemon, preStart func(*ActionAgent)) *ActionAgent {
+func NewTestActionAgent(batchCtx context.Context, ts *topo.Server, tabletAlias *topodatapb.TabletAlias, vtPort, grpcPort int32, mysqlDaemon mysqlctl.MysqlDaemon, preStart func(*ActionAgent)) *ActionAgent {
 	agent := &ActionAgent{
 		QueryServiceControl: tabletservermock.NewController(),
 		UpdateStream:        binlog.NewUpdateStreamControlMock(),
@@ -300,11 +340,15 @@ func NewTestActionAgent(batchCtx context.Context, ts topo.Server, tabletAlias *t
 	}
 
 	// Start will update the topology and setup services.
-	if err := agent.Start(batchCtx, 0, vtPort, grpcPort, false); err != nil {
+	if err := agent.Start(batchCtx, "", 0, vtPort, grpcPort, false); err != nil {
 		panic(fmt.Errorf("agent.Start(%v) failed: %v", tabletAlias, err))
 	}
 
-	// Update our running state.
+	// Update our running state. Need to take action lock.
+	if err := agent.lock(batchCtx); err != nil {
+		panic(fmt.Errorf("agent.lock() failed: %v", err))
+	}
+	defer agent.unlock()
 	if err := agent.refreshTablet(batchCtx, "Start"); err != nil {
 		panic(fmt.Errorf("agent.refreshTablet(%v) failed: %v", tabletAlias, err))
 	}
@@ -315,7 +359,7 @@ func NewTestActionAgent(batchCtx context.Context, ts topo.Server, tabletAlias *t
 // NewComboActionAgent creates an agent tailored specifically to run
 // within the vtcombo binary. It cannot be called concurrently,
 // as it changes the flags.
-func NewComboActionAgent(batchCtx context.Context, ts topo.Server, tabletAlias *topodatapb.TabletAlias, vtPort, grpcPort int32, queryServiceControl tabletserver.Controller, dbcfgs dbconfigs.DBConfigs, mysqlDaemon mysqlctl.MysqlDaemon, keyspace, shard, dbname, tabletType string) *ActionAgent {
+func NewComboActionAgent(batchCtx context.Context, ts *topo.Server, tabletAlias *topodatapb.TabletAlias, vtPort, grpcPort int32, queryServiceControl tabletserver.Controller, dbcfgs dbconfigs.DBConfigs, mysqlDaemon mysqlctl.MysqlDaemon, keyspace, shard, dbname, tabletType string) *ActionAgent {
 	agent := &ActionAgent{
 		QueryServiceControl: queryServiceControl,
 		UpdateStream:        binlog.NewUpdateStreamControlMock(),
@@ -326,7 +370,7 @@ func NewComboActionAgent(batchCtx context.Context, ts topo.Server, tabletAlias *
 		MysqlDaemon:         mysqlDaemon,
 		DBConfigs:           dbcfgs,
 		BinlogPlayerMap:     nil,
-		skipMysqlPortCheck:  true,
+		gotMysqlPort:        true,
 		History:             history.New(historyLength),
 		_healthy:            fmt.Errorf("healthcheck not run yet"),
 	}
@@ -342,11 +386,15 @@ func NewComboActionAgent(batchCtx context.Context, ts topo.Server, tabletAlias *
 	}
 
 	// Start the agent.
-	if err := agent.Start(batchCtx, 0, vtPort, grpcPort, false); err != nil {
+	if err := agent.Start(batchCtx, "", 0, vtPort, grpcPort, false); err != nil {
 		panic(fmt.Errorf("agent.Start(%v) failed: %v", tabletAlias, err))
 	}
 
-	// And update our running state.
+	// And update our running state (need to take the Action lock).
+	if err := agent.lock(batchCtx); err != nil {
+		panic(fmt.Errorf("agent.lock() failed: %v", err))
+	}
+	defer agent.unlock()
 	if err := agent.refreshTablet(batchCtx, "Start"); err != nil {
 		panic(fmt.Errorf("agent.refreshTablet(%v) failed: %v", tabletAlias, err))
 	}
@@ -478,7 +526,7 @@ func (agent *ActionAgent) verifyTopology(ctx context.Context) {
 // Start validates and updates the topology records for the tablet, and performs
 // the initial state change callback to start tablet services.
 // If initUpdateStream is set, update stream service will also be registered.
-func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, gRPCPort int32, initUpdateStream bool) error {
+func (agent *ActionAgent) Start(ctx context.Context, mysqlHost string, mysqlPort, vtPort, gRPCPort int32, initUpdateStream bool) error {
 	// find our hostname as fully qualified, and IP
 	hostname := *tabletHostname
 	if hostname == "" {
@@ -488,23 +536,24 @@ func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, gRPCPort
 			return err
 		}
 	}
-	ipAddrs, err := net.LookupHost(hostname)
-	if err != nil {
-		return err
+
+	// If mysqlHost is not set, a unix socket was specified. So, assume
+	// it's the same as the current host.
+	if mysqlHost == "" {
+		mysqlHost = hostname
 	}
-	ipAddr := ipAddrs[0]
 
 	// Update bind addr for mysql and query service in the tablet node.
 	f := func(tablet *topodatapb.Tablet) error {
 		tablet.Hostname = hostname
-		tablet.Ip = ipAddr
+		tablet.MysqlHostname = mysqlHost
 		if tablet.PortMap == nil {
 			tablet.PortMap = make(map[string]int32)
 		}
 		if mysqlPort != 0 {
 			// only overwrite mysql port if we know it, otherwise
 			// leave it as is.
-			tablet.PortMap["mysql"] = mysqlPort
+			topoproto.SetMysqlPort(tablet, int32(mysqlPort))
 		}
 		if vtPort != 0 {
 			tablet.PortMap["vt"] = vtPort
@@ -542,11 +591,13 @@ func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, gRPCPort
 		}
 	}
 
-	// create and register the RPC services from UpdateStream
+	// Create and register the RPC services from UpdateStream.
 	// (it needs the dbname, so it has to be delayed up to here,
 	// but it has to be before updateState below that may use it)
 	if initUpdateStream {
-		us := binlog.NewUpdateStream(agent.TopoServer, agent.initialTablet.Keyspace, agent.TabletAlias.Cell, agent.MysqlDaemon, agent.QueryServiceControl.SchemaEngine(), agent.DBConfigs.App.DbName)
+		cp := agent.DBConfigs.Dba
+		cp.DbName = agent.DBConfigs.App.DbName
+		us := binlog.NewUpdateStream(agent.TopoServer, agent.initialTablet.Keyspace, agent.TabletAlias.Cell, &cp, agent.QueryServiceControl.SchemaEngine())
 		agent.UpdateStream = us
 		servenv.OnRun(func() {
 			us.RegisterService()
@@ -566,7 +617,7 @@ func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, gRPCPort
 		Keyspace:   agent.initialTablet.Keyspace,
 		Shard:      agent.initialTablet.Shard,
 		TabletType: agent.initialTablet.Type,
-	}, agent.DBConfigs, agent.MysqlDaemon); err != nil {
+	}, agent.DBConfigs); err != nil {
 		return fmt.Errorf("failed to InitDBConfig: %v", err)
 	}
 
@@ -593,11 +644,26 @@ func (agent *ActionAgent) Start(ctx context.Context, mysqlPort, vtPort, gRPCPort
 	startingTablet.Type = topodatapb.TabletType_UNKNOWN
 	agent.setTablet(startingTablet)
 
-	// run a background task to rebuild the SrvKeyspace in our cell/keyspace
-	// if it doesn't exist yet
-	go agent.maybeRebuildKeyspace(agent.initialTablet.Alias.Cell, agent.initialTablet.Keyspace)
-
 	return nil
+}
+
+// Close prepares a tablet for shutdown. First we check our tablet ownership and
+// then prune the tablet topology entry of all post-init fields. This prevents
+// stale identifiers from hanging around in topology.
+func (agent *ActionAgent) Close() {
+	// cleanup initialized fields in the tablet entry
+	f := func(tablet *topodatapb.Tablet) error {
+		if err := topotools.CheckOwnership(agent.initialTablet, tablet); err != nil {
+			return err
+		}
+		tablet.Hostname = ""
+		tablet.MysqlHostname = ""
+		tablet.PortMap = nil
+		return nil
+	}
+	if _, err := agent.TopoServer.UpdateTabletFields(context.Background(), agent.TabletAlias, f); err != nil {
+		log.Warningf("Failed to update tablet record, may contain stale identifiers: %v", err)
+	}
 }
 
 // Stop shuts down the agent. Normally this is not necessary, since we use
@@ -623,29 +689,65 @@ func (agent *ActionAgent) hookExtraEnv() map[string]string {
 
 // checkTabletMysqlPort will check the mysql port for the tablet is good,
 // and if not will try to update it. It returns the modified Tablet record,
-// if it was changed.
+// if it was updated successfully in the topology server.
+//
+// We use the agent.waitingForMysql flag to log only the first
+// error we get when trying to get the port from MySQL, and store it in the
+// topology. That way we don't spam the logs.
+//
+// The actionMutex lock must be held when calling this function.
 func (agent *ActionAgent) checkTabletMysqlPort(ctx context.Context, tablet *topodatapb.Tablet) *topodatapb.Tablet {
+	agent.checkLock()
 	mport, err := agent.MysqlDaemon.GetMysqlPort()
 	if err != nil {
-		log.Warningf("Cannot get current mysql port, not checking it: %v", err)
+		// Only log the first time, so we don't spam the logs.
+		if !agent.waitingForMysql {
+			log.Warningf("Cannot get current mysql port, not checking it (will retry at healthcheck interval): %v", err)
+			agent.waitingForMysql = true
+		}
 		return nil
 	}
 
-	if mport == tablet.PortMap["mysql"] {
+	if mport == topoproto.MysqlPort(tablet) {
+		// The topology record contains the right port.
+		// Remember we successfully checked it, and that we're
+		// not waiting on MySQL to start any more.
+		agent.gotMysqlPort = true
+		agent.waitingForMysql = false
 		return nil
 	}
 
-	log.Warningf("MySQL port has changed from %v to %v, updating it in tablet record", tablet.PortMap["mysql"], mport)
+	// Update the port in the topology. Use a shorter timeout, so if
+	// the topo server is busy / throttling us, we don't hang forever here.
+	// The healthcheck go routine will try again next time.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if !agent.waitingForMysql {
+		log.Warningf("MySQL port has changed from %v to %v, updating it in tablet record", topoproto.MysqlPort(tablet), mport)
+	}
 	newTablet, err := agent.TopoServer.UpdateTabletFields(ctx, tablet.Alias, func(t *topodatapb.Tablet) error {
-		t.PortMap["mysql"] = mport
+		if err := topotools.CheckOwnership(agent.initialTablet, tablet); err != nil {
+			return err
+		}
+		topoproto.SetMysqlPort(t, mport)
 		return nil
 	})
 	if err != nil {
-		log.Warningf("Failed to update tablet record, may use old mysql port")
+		if !agent.waitingForMysql {
+			// After this, we will try again on every
+			// heartbeat to go through this code, but we
+			// won't log it.
+			log.Warningf("Failed to update tablet record, may use old mysql port: %v", err)
+			agent.waitingForMysql = true
+		}
 		return nil
 	}
 
-	// update worked, return the new record
+	// Update worked, return the new record, so the agent can save it.
+	// This should not happen often, so we can log it.
+	log.Infof("MySQL port has changed from %v to %v, successfully updated the tablet record in topology", topoproto.MysqlPort(tablet), mport)
+	agent.gotMysqlPort = true
+	agent.waitingForMysql = false
 	return newTablet
 }
 

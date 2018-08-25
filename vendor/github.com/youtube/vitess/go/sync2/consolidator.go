@@ -1,17 +1,26 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package sync2
 
 import (
-	"fmt"
-	"net/http"
 	"sync"
 	"sync/atomic"
 
-	"github.com/youtube/vitess/go/acl"
-	"github.com/youtube/vitess/go/cache"
+	"vitess.io/vitess/go/cache"
 )
 
 // Consolidator consolidates duplicate queries from executing simulaneously
@@ -88,24 +97,6 @@ func NewConsolidatorCache(capacity int64) *ConsolidatorCache {
 	return &ConsolidatorCache{cache.NewLRUCache(capacity)}
 }
 
-// ServeHTTP lists the most recent, cached queries and their count.
-func (cc *ConsolidatorCache) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if err := acl.CheckAccessHTTP(request, acl.DEBUGGING); err != nil {
-		acl.SendError(response, err)
-		return
-	}
-	items := cc.Items()
-	response.Header().Set("Content-Type", "text/plain")
-	if items == nil {
-		response.Write([]byte("empty\n"))
-		return
-	}
-	response.Write([]byte(fmt.Sprintf("Length: %d\n", len(items))))
-	for _, v := range items {
-		response.Write([]byte(fmt.Sprintf("%v: %s\n", v.Value.(*ccount).get(), v.Key)))
-	}
-}
-
 // Record increments the count for "query" by 1.
 // If it's not in the cache yet, it will be added.
 func (cc *ConsolidatorCache) Record(query string) {
@@ -115,6 +106,22 @@ func (cc *ConsolidatorCache) Record(query string) {
 		c := ccount(1)
 		cc.Set(query, &c)
 	}
+}
+
+// ConsolidatorCacheItem is a wrapper for the items in the consolidator cache
+type ConsolidatorCacheItem struct {
+	Query string
+	Count int64
+}
+
+// Items returns the items in the cache as an array of String, int64 structs
+func (cc *ConsolidatorCache) Items() []ConsolidatorCacheItem {
+	items := cc.LRUCache.Items()
+	ret := make([]ConsolidatorCacheItem, len(items), len(items))
+	for i, v := range items {
+		ret[i] = ConsolidatorCacheItem{Query: v.Key, Count: v.Value.(*ccount).get()}
+	}
+	return ret
 }
 
 // ccount elements are used with a cache.LRUCache object to track if another

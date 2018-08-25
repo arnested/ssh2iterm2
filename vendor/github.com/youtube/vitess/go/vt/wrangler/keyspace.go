@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package wrangler
 
@@ -11,17 +23,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/youtube/vitess/go/event"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/topotools"
-	"github.com/youtube/vitess/go/vt/topotools/events"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/event"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools"
+	"vitess.io/vitess/go/vt/topotools/events"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vschemapb "vitess.io/vitess/go/vt/proto/vschema"
 )
 
 const (
@@ -492,16 +505,16 @@ func (wr *Wrangler) waitForDrainInCell(ctx context.Context, cell, keyspace, shar
 	retryDelay, healthCheckTopologyRefresh, healthcheckRetryDelay, healthCheckTimeout, initialWait time.Duration) error {
 
 	// Create the healthheck module, with a cache.
-	hc := discovery.NewHealthCheck(healthCheckTimeout /* connectTimeout */, healthcheckRetryDelay, healthCheckTimeout)
+	hc := discovery.NewHealthCheck(healthcheckRetryDelay, healthCheckTimeout)
 	defer hc.Close()
-	tsc := discovery.NewTabletStatsCache(hc, cell)
+	tsc := discovery.NewTabletStatsCache(hc, wr.TopoServer(), cell)
 
 	// Create a tablet watcher.
 	watcher := discovery.NewShardReplicationWatcher(wr.TopoServer(), hc, cell, keyspace, shard, healthCheckTopologyRefresh, discovery.DefaultTopoReadConcurrency)
 	defer watcher.Stop()
 
 	// Wait for at least one tablet.
-	if err := tsc.WaitForTablets(ctx, cell, keyspace, shard, []topodatapb.TabletType{servedType}); err != nil {
+	if err := tsc.WaitForTablets(ctx, cell, keyspace, shard, servedType); err != nil {
 		return fmt.Errorf("%v: error waiting for initial %v tablets for %v/%v: %v", cell, servedType, keyspace, shard, err)
 	}
 
@@ -695,11 +708,7 @@ func (wr *Wrangler) replicaMigrateServedFrom(ctx context.Context, ki *topo.Keysp
 	// Now refresh the source servers so they reload their
 	// blacklisted table list
 	event.DispatchUpdate(ev, "refreshing sources tablets state so they update their blacklisted tables")
-	if err := wr.RefreshTabletsByShard(ctx, sourceShard, []topodatapb.TabletType{servedType}, cells); err != nil {
-		return err
-	}
-
-	return nil
+	return wr.RefreshTabletsByShard(ctx, sourceShard, []topodatapb.TabletType{servedType}, cells)
 }
 
 // masterMigrateServedFrom handles the master migration. The ordering is
@@ -776,11 +785,7 @@ func (wr *Wrangler) masterMigrateServedFrom(ctx context.Context, ki *topo.Keyspa
 	// Invoking a remote action will also make the tablet stop filtered
 	// replication.
 	event.DispatchUpdate(ev, "setting destination shard masters read-write")
-	if err := wr.refreshMasters(ctx, []*topo.ShardInfo{destinationShard}); err != nil {
-		return err
-	}
-
-	return nil
+	return wr.refreshMasters(ctx, []*topo.ShardInfo{destinationShard})
 }
 
 // SetKeyspaceServedFrom locks a keyspace and changes its ServerFromMap
@@ -822,6 +827,12 @@ func (wr *Wrangler) RefreshTabletsByShard(ctx context.Context, si *topo.ShardInf
 	wg := sync.WaitGroup{}
 	for _, ti := range tabletMap {
 		if tabletTypes != nil && !topoproto.IsTypeInList(ti.Type, tabletTypes) {
+			continue
+		}
+		if ti.Hostname == "" {
+			// The tablet is not running, we don't have the host
+			// name to connect to, so we just skip this tablet.
+			wr.Logger().Infof("Tablet %v has no hostname, skipping its RefreshState", ti.AliasString())
 			continue
 		}
 
@@ -885,13 +896,19 @@ func (wr *Wrangler) DeleteKeyspace(ctx context.Context, keyspace string, recursi
 		}
 	}
 
+	// Delete the cell-global VSchema path
+	// If not remove this, vtctld web page Dashboard will Display Error
+	vschema := &vschemapb.Keyspace{}
+	if err := wr.ts.SaveVSchema(ctx, keyspace, vschema); err != nil && err != topo.ErrNoNode {
+		return err
+	}
+
 	return wr.ts.DeleteKeyspace(ctx, keyspace)
 }
 
-// RemoveKeyspaceCell will remove a cell from the Cells list in all shards of a keyspace.
-//
-// It is essentially a shortcut for calling RemoveShardCell on every shard,
-// reducing the potential for operator error when there are many shards.
+// RemoveKeyspaceCell will remove a cell from the Cells list in all
+// shards of a keyspace (by calling RemoveShardCell on every
+// shard). It will also remove the SrvKeyspace for that keyspace/cell.
 func (wr *Wrangler) RemoveKeyspaceCell(ctx context.Context, keyspace, cell string, force, recursive bool) error {
 	shards, err := wr.ts.GetShardNames(ctx, keyspace)
 	if err != nil {
@@ -903,5 +920,8 @@ func (wr *Wrangler) RemoveKeyspaceCell(ctx context.Context, keyspace, cell strin
 			return fmt.Errorf("can't remove cell %v from shard %v/%v: %v", cell, keyspace, shard, err)
 		}
 	}
-	return nil
+
+	// Now remove the SrvKeyspace object.
+	wr.Logger().Infof("Removing cell %v keyspace %v SrvKeyspace object", cell, keyspace)
+	return wr.ts.DeleteSrvKeyspace(ctx, cell, keyspace)
 }

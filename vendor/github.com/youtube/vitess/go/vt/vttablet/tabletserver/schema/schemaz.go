@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package schema
 
@@ -9,9 +21,9 @@ import (
 	"net/http"
 	"sort"
 
-	log "github.com/golang/glog"
-	"github.com/youtube/vitess/go/acl"
-	"github.com/youtube/vitess/go/vt/logz"
+	"vitess.io/vitess/go/acl"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logz"
 )
 
 var (
@@ -31,8 +43,8 @@ var (
 	schemazTmpl = template.Must(template.New("example").Parse(`
 	{{$top := .}}{{with .Table}}<tr class="low">
 			<td>{{.Name}}</td>
-			<td>{{range .Columns}}{{.Name}}: {{.Type}}, {{if .IsAuto}}autoinc{{end}}, {{.Default}}<br>{{end}}</td>
-			<td>{{range .Indexes}}{{.Name}}: ({{range .Columns}}{{.}},{{end}}), ({{range .Cardinality}}{{.}},{{end}})<br>{{end}}</td>
+			<td>{{range .Columns}}{{.Name}}: {{.Type}}, {{if .IsAuto}}autoinc{{end}}, {{.Default.ToString}}<br>{{end}}</td>
+			<td>{{range .Indexes}}{{.Name}}{{if .Unique}}(unique){{end}}: ({{range .Columns}}{{.}},{{end}}), ({{range .Cardinality}}{{.}},{{end}})<br>{{end}}</td>
 			<td>{{index $top.Type .Type}}</td>
 			<td>{{.TableRows.Get}}</td>
 			<td>{{.DataLength.Get}}</td>

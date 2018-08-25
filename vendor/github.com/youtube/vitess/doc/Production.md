@@ -25,10 +25,10 @@ and we are open to contributions in this area.
 
 ## Deploying in Kubernetes
 
-See the [Getting Started](http://vitess.io/getting-started/) guide.
+See the [Getting Started]({% link getting-started/index.md %}) guide.
 
 ## Deploying on bare metal
 
 See the
-[Local Setup](https://github.com/youtube/vitess/tree/master/examples/local)
+[Local Setup](https://github.com/vitessio/vitess/tree/master/examples/local)
 scripts for examples of how to bring up a Vitess cluster manually.
