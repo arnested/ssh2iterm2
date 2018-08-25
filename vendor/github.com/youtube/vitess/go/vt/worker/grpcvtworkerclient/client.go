@@ -1,26 +1,37 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package grpcvtworkerclient contains the gRPC version of the vtworker client protocol.
 package grpcvtworkerclient
 
 import (
 	"flag"
-	"time"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/servenv/grpcutils"
-	"github.com/youtube/vitess/go/vt/vterrors"
-	"github.com/youtube/vitess/go/vt/worker/vtworkerclient"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/worker/vtworkerclient"
 
-	logutilpb "github.com/youtube/vitess/go/vt/proto/logutil"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
-	vtworkerdatapb "github.com/youtube/vitess/go/vt/proto/vtworkerdata"
-	vtworkerservicepb "github.com/youtube/vitess/go/vt/proto/vtworkerservice"
+	logutilpb "vitess.io/vitess/go/vt/proto/logutil"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
+	vtworkerdatapb "vitess.io/vitess/go/vt/proto/vtworkerdata"
+	vtworkerservicepb "vitess.io/vitess/go/vt/proto/vtworkerservice"
 )
 
 var (
@@ -35,15 +46,15 @@ type gRPCVtworkerClient struct {
 	c  vtworkerservicepb.VtworkerClient
 }
 
-func gRPCVtworkerClientFactory(addr string, dialTimeout time.Duration) (vtworkerclient.Client, error) {
+func gRPCVtworkerClientFactory(addr string) (vtworkerclient.Client, error) {
 	// create the RPC client
-	opt, err := grpcutils.ClientSecureDialOption(*cert, *key, *ca, *name)
+	opt, err := grpcclient.SecureDialOption(*cert, *key, *ca, *name)
 	if err != nil {
 		return nil, err
 	}
-	cc, err := grpc.Dial(addr, opt, grpc.WithBlock(), grpc.WithTimeout(dialTimeout))
+	cc, err := grpcclient.Dial(addr, grpcclient.FailFast(false), opt)
 	if err != nil {
-		return nil, vterrors.Errorf(vtrpcpb.Code_DEADLINE_EXCEEDED, "grpc.Dial() err: %v", err)
+		return nil, vterrors.Errorf(vtrpcpb.Code_DEADLINE_EXCEEDED, "grpcclient.Dial() err: %v", err)
 	}
 	c := vtworkerservicepb.NewVtworkerClient(cc)
 

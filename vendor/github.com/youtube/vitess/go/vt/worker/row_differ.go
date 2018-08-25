@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -10,14 +22,14 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/stats"
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/topo"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/topo"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // DiffType specifies why a specific row was found as different when comparing
@@ -62,7 +74,7 @@ type RowDiffer2 struct {
 	// aggregators are keyed by destination shard and DiffType.
 	aggregators [][]*RowAggregator
 	// equalRowsStatsCounters tracks per table how many rows are equal.
-	equalRowsStatsCounters *stats.Counters
+	equalRowsStatsCounters *stats.CountersWithSingleLabel
 	// tableName is required to update "equalRowsStatsCounters".
 	tableName string
 }
@@ -77,7 +89,7 @@ func NewRowDiffer2(ctx context.Context, left, right ResultReader, td *tabletmana
 	// Parameters required by RowRouter.
 	destinationShards []*topo.ShardInfo, keyResolver keyspaceIDResolver,
 	// Parameters required by RowAggregator.
-	insertChannels []chan string, abort <-chan struct{}, dbNames []string, writeQueryMaxRows, writeQueryMaxSize int, statsCounters []*stats.Counters) (*RowDiffer2, error) {
+	insertChannels []chan string, abort <-chan struct{}, dbNames []string, writeQueryMaxRows, writeQueryMaxSize int, statsCounters []*stats.CountersWithSingleLabel) (*RowDiffer2, error) {
 
 	if len(statsCounters) != len(DiffTypes) {
 		panic(fmt.Sprintf("statsCounter has the wrong number of elements. got = %v, want = %v", len(statsCounters), len(DiffTypes)))

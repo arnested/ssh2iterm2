@@ -1,8 +1,25 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package vtctl contains the implementation of all the Vitess management
+// commands.
+package vtctl
 
 // The following comment section contains definitions for command arguments.
+// It is parsed to generate the vtctl documentation automatically.
 /*
 COMMAND ARGUMENT DEFINITIONS
 
@@ -73,8 +90,6 @@ COMMAND ARGUMENT DEFINITIONS
             The data could be a potential master tablet.
 */
 
-package vtctl
-
 import (
 	"bytes"
 	"encoding/json"
@@ -83,34 +98,34 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	log "github.com/golang/glog"
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/flagutil"
-	"github.com/youtube/vitess/go/mysqlconn/replication"
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/sync2"
-	hk "github.com/youtube/vitess/go/vt/hook"
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/schemamanager"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/topotools"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/flagutil"
+	"vitess.io/vitess/go/json2"
+	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sync2"
+	hk "vitess.io/vitess/go/vt/hook"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/schemamanager"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	replicationdatapb "github.com/youtube/vitess/go/vt/proto/replicationdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
-	vschemapb "github.com/youtube/vitess/go/vt/proto/vschema"
+	replicationdatapb "vitess.io/vitess/go/vt/proto/replicationdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	vschemapb "vitess.io/vitess/go/vt/proto/vschema"
 )
 
 var (
@@ -213,7 +228,7 @@ var commands = []commandGroup{
 			{"TabletExternallyReparented", commandTabletExternallyReparented,
 				"<tablet alias>",
 				"Changes metadata in the topology server to acknowledge a shard master change performed by an external tool. See the Reparenting guide for more information:" +
-					"https://github.com/youtube/vitess/blob/master/doc/Reparenting.md#external-reparents."},
+					"https://github.com/vitessio/vitess/blob/master/doc/Reparenting.md#external-reparents."},
 			{"ValidateShard", commandValidateShard,
 				"[-ping-tablets] <keyspace/shard>",
 				"Validates that all nodes that are reachable from this shard are consistent."},
@@ -268,7 +283,7 @@ var commands = []commandGroup{
 				"Deletes the specified keyspace. In recursive mode, it also recursively deletes all shards in the keyspace. Otherwise, there must be no shards left in the keyspace."},
 			{"RemoveKeyspaceCell", commandRemoveKeyspaceCell,
 				"[-force] [-recursive] <keyspace> <cell>",
-				"Removes the cell from the Cells list for all shards in the keyspace."},
+				"Removes the cell from the Cells list for all shards in the keyspace, and the SrvKeyspace for that keyspace in that cell."},
 			{"GetKeyspace", commandGetKeyspace,
 				"<keyspace>",
 				"Outputs a JSON structure that contains information about the Keyspace."},
@@ -385,6 +400,9 @@ var commands = []commandGroup{
 			{"GetSrvVSchema", commandGetSrvVSchema,
 				"<cell>",
 				"Outputs a JSON structure that contains information about the SrvVSchema."},
+			{"DeleteSrvVSchema", commandDeleteSrvVSchema,
+				"<cell>",
+				"Deletes the SrvVSchema object in the given cell."},
 		},
 	},
 	{
@@ -473,7 +491,7 @@ func dumpTablets(ctx context.Context, wr *wrangler.Wrangler, tabletAliases []*to
 		return err
 	}
 	for _, tabletAlias := range tabletAliases {
-		ti, ok := tabletMap[*tabletAlias]
+		ti, ok := tabletMap[topoproto.TabletAliasString(tabletAlias)]
 		if !ok {
 			log.Warningf("failed to load tablet %v", tabletAlias)
 		} else {
@@ -519,7 +537,7 @@ func keyspaceParamsToKeyspaces(ctx context.Context, wr *wrangler.Wrangler, param
 		} else {
 			// this is not a path, so assume a keyspace name,
 			// possibly with wildcards
-			keyspaces, err := topo.ResolveKeyspaceWildcard(ctx, wr.TopoServer(), param)
+			keyspaces, err := wr.TopoServer().ResolveKeyspaceWildcard(ctx, param)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to resolve keyspace wildcard %v: %v", param, err)
 			}
@@ -549,7 +567,7 @@ func shardParamsToKeyspaceShards(ctx context.Context, wr *wrangler.Wrangler, par
 		} else {
 			// this is not a path, so assume a keyspace
 			// name / shard name, each possibly with wildcards
-			keyspaceShards, err := topo.ResolveShardWildcard(ctx, wr.TopoServer(), param)
+			keyspaceShards, err := wr.TopoServer().ResolveShardWildcard(ctx, param)
 			if err != nil {
 				return nil, fmt.Errorf("Failed to resolve keyspace/shard wildcard %v: %v", param, err)
 			}
@@ -605,7 +623,8 @@ func commandInitTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *fla
 	allowMasterOverride := subFlags.Bool("allow_master_override", false, "Use this flag to force initialization if a tablet is created as master, and a master for the keyspace/shard already exists. Use with caution.")
 	createShardAndKeyspace := subFlags.Bool("parent", false, "Creates the parent shard and keyspace if they don't yet exist")
 	hostname := subFlags.String("hostname", "", "The server on which the tablet is running")
-	mysqlPort := subFlags.Int("mysql_port", 0, "The mysql port for the mysql daemon")
+	mysqlHost := subFlags.String("mysql_host", "", "The mysql host for the mysql server")
+	mysqlPort := subFlags.Int("mysql_port", 0, "The mysql port for the mysql server")
 	port := subFlags.Int("port", 0, "The main port for the vttablet process")
 	grpcPort := subFlags.Int("grpc_port", 0, "The gRPC port for the vttablet process")
 	keyspace := subFlags.String("keyspace", "", "The keyspace to which this tablet belongs")
@@ -633,6 +652,7 @@ func commandInitTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *fla
 	tablet := &topodatapb.Tablet{
 		Alias:          tabletAlias,
 		Hostname:       *hostname,
+		MysqlHostname:  *mysqlHost,
 		PortMap:        make(map[string]int32),
 		Keyspace:       *keyspace,
 		Shard:          *shard,
@@ -644,7 +664,7 @@ func commandInitTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *fla
 		tablet.PortMap["vt"] = int32(*port)
 	}
 	if *mysqlPort != 0 {
-		tablet.PortMap["mysql"] = int32(*mysqlPort)
+		topoproto.SetMysqlPort(tablet, int32(*mysqlPort))
 	}
 	if *grpcPort != 0 {
 		tablet.PortMap["grpc"] = int32(*grpcPort)
@@ -675,7 +695,7 @@ func commandGetTablet(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag
 
 func commandUpdateTabletAddrs(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
 	hostname := subFlags.String("hostname", "", "The fully qualified host name of the server on which the tablet is running.")
-	ipAddr := subFlags.String("ip-addr", "", "IP address")
+	mysqlHost := subFlags.String("mysql_host", "", "The mysql host for the mysql server")
 	mysqlPort := subFlags.Int("mysql-port", 0, "The mysql port for the mysql daemon")
 	vtPort := subFlags.Int("vt-port", 0, "The main port for the vttablet process")
 	grpcPort := subFlags.Int("grpc-port", 0, "The gRPC port for the vttablet process")
@@ -686,20 +706,18 @@ func commandUpdateTabletAddrs(ctx context.Context, wr *wrangler.Wrangler, subFla
 	if subFlags.NArg() != 1 {
 		return fmt.Errorf("the <tablet alias> argument is required for the UpdateTabletAddrs command")
 	}
-	if *ipAddr != "" && net.ParseIP(*ipAddr) == nil {
-		return fmt.Errorf("malformed address: %v", *ipAddr)
-	}
 
 	tabletAlias, err := topoproto.ParseTabletAlias(subFlags.Arg(0))
 	if err != nil {
 		return err
 	}
+
 	_, err = wr.TopoServer().UpdateTabletFields(ctx, tabletAlias, func(tablet *topodatapb.Tablet) error {
 		if *hostname != "" {
 			tablet.Hostname = *hostname
 		}
-		if *ipAddr != "" {
-			tablet.Ip = *ipAddr
+		if *mysqlHost != "" {
+			tablet.MysqlHostname = *mysqlHost
 		}
 		if *vtPort != 0 || *grpcPort != 0 || *mysqlPort != 0 {
 			if tablet.PortMap == nil {
@@ -712,7 +730,7 @@ func commandUpdateTabletAddrs(ctx context.Context, wr *wrangler.Wrangler, subFla
 				tablet.PortMap["grpc"] = int32(*grpcPort)
 			}
 			if *mysqlPort != 0 {
-				tablet.PortMap["mysql"] = int32(*mysqlPort)
+				topoproto.SetMysqlPort(tablet, int32(*mysqlPort))
 			}
 		}
 		return nil
@@ -1369,7 +1387,7 @@ func commandShardReplicationFix(ctx context.Context, wr *wrangler.Wrangler, subF
 		return err
 	}
 	if subFlags.NArg() != 2 {
-		return fmt.Errorf("the <cell> and <keyspace/shard> arguments are required for the ShardReplicationRemove command")
+		return fmt.Errorf("the <cell> and <keyspace/shard> arguments are required for the ShardReplicationFix command")
 	}
 
 	cell := subFlags.Arg(0)
@@ -2067,7 +2085,7 @@ func commandApplyVSchema(ctx context.Context, wr *wrangler.Wrangler, subFlags *f
 		schema = []byte(*vschema)
 	}
 	var vs vschemapb.Keyspace
-	err := json.Unmarshal(schema, &vs)
+	err := json2.Unmarshal(schema, &vs)
 	if err != nil {
 		return err
 	}
@@ -2076,7 +2094,7 @@ func commandApplyVSchema(ctx context.Context, wr *wrangler.Wrangler, subFlags *f
 		return err
 	}
 
-	b, err := json.MarshalIndent(&vs, "", "  ")
+	b, err := json2.MarshalIndentPB(&vs, "  ")
 	if err != nil {
 		wr.Logger().Errorf("Failed to marshal VSchema for display: %v", err)
 	} else {
@@ -2136,6 +2154,17 @@ func commandGetSrvVSchema(ctx context.Context, wr *wrangler.Wrangler, subFlags *
 		return err
 	}
 	return printJSON(wr.Logger(), srvVSchema)
+}
+
+func commandDeleteSrvVSchema(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
+	if err := subFlags.Parse(args); err != nil {
+		return err
+	}
+	if subFlags.NArg() != 1 {
+		return fmt.Errorf("the <cell> argument is required for the DeleteSrvVSchema command")
+	}
+
+	return wr.TopoServer().DeleteSrvVSchema(ctx, subFlags.Arg(0))
 }
 
 func commandGetShardReplication(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {
@@ -2212,11 +2241,11 @@ func (rts rTablets) Less(i, j int) bool {
 		return false
 	}
 	// then compare replication positions
-	lpos, err := replication.DecodePosition(l.Position)
+	lpos, err := mysql.DecodePosition(l.Position)
 	if err != nil {
 		return true
 	}
-	rpos, err := replication.DecodePosition(r.Position)
+	rpos, err := mysql.DecodePosition(r.Position)
 	if err != nil {
 		return false
 	}
@@ -2272,6 +2301,14 @@ func MarshalJSON(obj interface{}) (data []byte, err error) {
 			return nil, fmt.Errorf("jsonpb error: %v", err)
 		}
 		data = b.Bytes()
+	case []string:
+		if len(obj) == 0 {
+			return []byte{'[', ']'}, nil
+		}
+		data, err = json.MarshalIndent(obj, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("json error: %v", err)
+		}
 	default:
 		data, err = json.MarshalIndent(obj, "", "  ")
 		if err != nil {

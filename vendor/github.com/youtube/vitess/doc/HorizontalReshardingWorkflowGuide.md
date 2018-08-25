@@ -1,10 +1,10 @@
-
 This guide shows you an example about how to apply range-based sharding
-process in an existing unsharded Vitess [keyspace](http://vitess.io/overview/concepts.html#keyspace)
+process in an existing unsharded Vitess [keyspace]({% link overview/concepts.md %}#keyspace)
 using the horizontal resharding workflow. In this example, we will reshard
 from 1 shard "0" into 2 shards "-80" and "80-".
 
 ## Overview
+
 The horizontal resharding process mainly contains the following steps
 (each step is a phase in the workflow):
 
@@ -12,9 +12,9 @@ The horizontal resharding process mainly contains the following steps
     (**Phase: CopySchemaShard**) 
 1.  Copy the data with a batch process called *vtworker*
     (**Phase: SplitClone**).
-    [more details](horizontal-sharding-workflow.html#details-in-splitclone-phase)
+    [more details](#details-in-splitclone-phase)
 1.  Check filtered replication (**Phase: WaitForFilteredReplication**).
-    [more details](horizontal-sharding-workflow.html#details-in-waitforfilteredreplication-phase) 
+    [more details](#details-in-waitforfilteredreplication-phase)
 1.  Check copied data integrity using *vtworker* batch process in the mode
     to compare the source and destination data. (**Phase: SplitDiff**)
 1.  Migrate all the serving rdonly tablets in the original shards.
@@ -23,11 +23,11 @@ The horizontal resharding process mainly contains the following steps
     (**Phase: MigrateServedTypeReplica**)
 1.  Migrate all the serving master tablets in the original shards.
     (**Phase: MigrateServedTypeMaster**)
-    [more details](horizontal-sharding-workflow.html#details-in-migrateservedtypemaste-phase) 
+    [more details](#details-in-migrateservedtypemaste-phase)
 
 ## Prerequisites
 
-You should complete the [Getting Started](http://vitess.io/getting-started/local-instance.html) guide
+You should complete the [Getting Started]({% link getting-started/local-instance.md %}) guide
 (please finish all the steps before Try Vitess resharding) and have left
 the cluster running. Then, please follow these steps before running
 the resharding process:
@@ -41,7 +41,7 @@ the resharding process:
 
 1.  Bring up tablets for 2 additional shards:  *test_keyspace/-80* and
     *test_keyspace/80-* (you can learn more about sharding key range
-    [here](http://vitess.io/user-guide/sharding.html#key-ranges-and-partitions)):
+    [here]({% link user-guide/sharding.md %}#key-ranges-and-partitions)):
 
     ``` sh
     vitess/examples/local$ ./sharded-vttablet-up.sh
@@ -73,7 +73,9 @@ the resharding process:
     "Reset Job". Otherwise, the vtworker is not ready for executing other tasks.
 
 ## Horizontal resharding workflow
+
 ### Create the workflow
+
 1.  Open the *Workflows* section on the left menu of vtctld UI (http://localhost:15000).
     Click the "+" button in the top right corner to open the "Create
     a new Workflow" dialog.
@@ -105,7 +107,7 @@ When creating the resharding workflow, the program automatically detect the
 source shards and destination shards and create tasks for the resharding
 process. After the creation, click the workflow node, you can see a list of
 child nodes. Each child node represents a phase in the workflow (each phase
-represents a step mentioned in [Overview](http://vitess.io/user-guide/horizontal-sharding-workflow.html#overview)).
+represents a step mentioned in [Overview]({% link user-guide/horizontal-sharding-workflow.md %}#overview)).
 Further click a phase node, you can inspect tasks in this phase.
 For example, in the "CopySchemaShard" phase, it includes tasks to copy schema
 to 2 destination shards, therefore you can see task node "Shard -80" and
@@ -113,6 +115,7 @@ to 2 destination shards, therefore you can see task node "Shard -80" and
 [this](https://cloud.githubusercontent.com/assets/23492389/24313539/71c9c8ae-109a-11e7-9e4a-0c3e8ee8ba85.png). 
 
 ### Approvals of Tasks Execution (Canary feature)
+
 Once the workflow start to run (click the "Start" button if you selected
 "Skip Start" and the workflow hasn't started yet.), you need to approve the
 task execution for each phase if "enable_approvals" is selected. The approvals
@@ -135,6 +138,7 @@ approval. But you don't need to approve the same tasks again for a restarted
 workflow.
 
 ### Retry
+
 A "Retry" button will be enabled under the task node if the task failed (click
 the task node if your job get stuck but don't see the Retry button). Click this
 button if you have fixed the bugs and want to retry the failed task. You can
@@ -153,6 +157,7 @@ that runs tasks sequentially, remaining unstarted tasks under this phase will
 no long be executed. The phases afterwards will no longer be executed.
 
 ### Checkpoint and Recovery
+
 The resharding workflow tracks the status for every task and checkpoint these
 status into topology server whenever there is a status update. When a workflow
 is stopped and restarted by loading the checkpoint in the topology, it can
@@ -160,13 +165,14 @@ continue to run all the unfinished tasks.
 
 
 ## Verify Results and Clean up
+
 After the resharding process, data in the original shard is identically copied
 to new shards. Data updates will be visible on the new shards, but not on the
 original shard. You should then see in the vtctld UI *Dashboard* page that shard
 *0* becomes non-serving and shard *-80* and shard *80-* are serving shards.
 Verify this for yourself: inspect the database content using following commands,
 then add messages to the guestbook page (you can use script client.sh mentioned
-[here](http://vitess.io/getting-started/local-instance.html#run-a-client-application))
+[here]({% link getting-started/local-instance.md %}#run-a-client-application))
 and inspect using same commands:
 
 ``` sh
@@ -219,10 +225,12 @@ vitess/examples/local$ ./zk-down.sh
 ```
 
 ## Reference
-You can checkout the old version tutorial [here](http://vitess.io/user-guide/horizontal-sharding.html).
+
+You can checkout the old version tutorial [here]({% link user-guide/horizontal-sharding.md %}).
 It walks you through the resharding process by manually executing commands.
 
 ### Details in SplitClone phase
+
 *vtworker* copies data from a paused snapshot. It will pause replication on
 one rdonly (offline processing) tablet to serve as a consistent snapshot of
 the data. The app can continue without downtime, since live traffic is served
@@ -238,13 +246,15 @@ range, so it identifies -80 and 80- as the destination shards, since they
 combine to cover the same range.
 
 ### Details in WaitForFilteredReplication phase
+
 Once the copying from a paused snapshot (phase SplitClone) has finished,
-*vtworker* turns on [filtered replication](http://vitess.io/user-guide/sharding.html#filtered-replication),
+*vtworker* turns on [filtered replication]({% link user-guide/sharding.md %}#filtered-replication),
 which allows the destination shards to catch up on updates that have continued
 to flow in from the app since the time of the snapshot. After the destination
 shards are caught up, they will continue to replicate new updates. 
 
 ### Details in MigrateServedTypeMaster phase
+
 During the *master* migration, the original shard masters will first stop
 accepting updates. Then the process will wait for the new shard masters to
 fully catch up on filtered replication before allowing them to begin serving.

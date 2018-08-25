@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package throttler
 
@@ -12,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youtube/vitess/go/vt/proto/throttlerdata"
+	throttlerdatapb "vitess.io/vitess/go/vt/proto/throttlerdata"
 )
 
 // We base our test data on these defaults.
@@ -91,7 +103,7 @@ func TestManager_GetConfiguration(t *testing.T) {
 	defer f.tearDown()
 
 	// Test GetConfiguration() when all throttlers are returned.
-	want := map[string]*throttlerdata.Configuration{
+	want := map[string]*throttlerdatapb.Configuration{
 		"t1": &defaultMaxReplicationLagModuleConfig.Configuration,
 		"t2": &defaultMaxReplicationLagModuleConfig.Configuration,
 	}
@@ -104,7 +116,7 @@ func TestManager_GetConfiguration(t *testing.T) {
 	}
 
 	// Test GetConfiguration() when a specific throttler is requested.
-	wantT2 := map[string]*throttlerdata.Configuration{
+	wantT2 := map[string]*throttlerdatapb.Configuration{
 		"t2": &defaultMaxReplicationLagModuleConfig.Configuration,
 	}
 	gotT2, err := f.m.GetConfiguration("t2")
@@ -116,7 +128,7 @@ func TestManager_GetConfiguration(t *testing.T) {
 	}
 
 	// Now change the config and then reset it back.
-	newConfig := &throttlerdata.Configuration{
+	newConfig := &throttlerdatapb.Configuration{
 		TargetReplicationLagSec: defaultTargetLag + 1,
 		IgnoreNSlowestReplicas:  defaultIgnoreNSlowestReplicas + 1,
 	}
@@ -160,7 +172,7 @@ func TestManager_UpdateConfiguration_Error(t *testing.T) {
 	defer f.tearDown()
 
 	// Check that errors from Verify() are correctly propagated.
-	invalidConfig := &throttlerdata.Configuration{
+	invalidConfig := &throttlerdatapb.Configuration{
 		// max < 2 is not allowed.
 		MaxReplicationLagSec: 1,
 	}
@@ -183,7 +195,7 @@ func TestManager_UpdateConfiguration_Partial(t *testing.T) {
 
 	// Verify that a partial update only updates that one field.
 	wantIgnoreNSlowestReplicas := defaultIgnoreNSlowestReplicas + 1
-	partialConfig := &throttlerdata.Configuration{
+	partialConfig := &throttlerdatapb.Configuration{
 		IgnoreNSlowestReplicas: wantIgnoreNSlowestReplicas,
 	}
 	names, err := f.m.UpdateConfiguration("t2", partialConfig, false /* copyZeroValues */)

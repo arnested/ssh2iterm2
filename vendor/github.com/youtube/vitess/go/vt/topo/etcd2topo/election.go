@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package etcd2topo
 
@@ -8,10 +20,10 @@ import (
 	"path"
 
 	"github.com/coreos/etcd/clientv3"
-	log "github.com/golang/glog"
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo"
 )
 
 // NewMasterParticipation is part of the topo.Server interface
@@ -49,8 +61,15 @@ type etcdMasterParticipation struct {
 
 // WaitForMastership is part of the topo.MasterParticipation interface.
 func (mp *etcdMasterParticipation) WaitForMastership() (context.Context, error) {
-	electionPath := path.Join(mp.s.global.root, electionsPath, mp.name)
-	lockPath := ""
+	// If Stop was already called, mp.done is closed, so we are interrupted.
+	select {
+	case <-mp.done:
+		return nil, topo.ErrInterrupted
+	default:
+	}
+
+	electionPath := path.Join(electionsPath, mp.name)
+	var ld topo.LockDescriptor
 
 	// We use a cancelable context here. If stop is closed,
 	// we just cancel that context.
@@ -58,9 +77,9 @@ func (mp *etcdMasterParticipation) WaitForMastership() (context.Context, error) 
 	go func() {
 		select {
 		case <-mp.stop:
-			if lockPath != "" {
-				if err := mp.s.unlock(context.Background(), electionPath, lockPath); err != nil {
-					log.Errorf("failed to delete lockPath %v for election %v: %v", lockPath, mp.name, err)
+			if ld != nil {
+				if err := ld.Unlock(context.Background()); err != nil {
+					log.Errorf("failed to unlock electionPath %v: %v", electionPath, err)
 				}
 			}
 			lockCancel()
@@ -70,7 +89,7 @@ func (mp *etcdMasterParticipation) WaitForMastership() (context.Context, error) 
 
 	// Try to get the mastership, by getting a lock.
 	var err error
-	lockPath, err = mp.s.lock(lockCtx, electionPath, mp.id)
+	ld, err = mp.s.lock(lockCtx, electionPath, mp.id)
 	if err != nil {
 		// It can be that we were interrupted.
 		return nil, err
@@ -89,10 +108,10 @@ func (mp *etcdMasterParticipation) Stop() {
 
 // GetCurrentMasterID is part of the topo.MasterParticipation interface
 func (mp *etcdMasterParticipation) GetCurrentMasterID(ctx context.Context) (string, error) {
-	electionPath := path.Join(mp.s.global.root, electionsPath, mp.name)
+	electionPath := path.Join(mp.s.root, electionsPath, mp.name)
 
 	// Get the keys in the directory, older first.
-	resp, err := mp.s.global.cli.Get(ctx, electionPath+"/",
+	resp, err := mp.s.cli.Get(ctx, electionPath+"/",
 		clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByModRevision, clientv3.SortAscend),
 		clientv3.WithLimit(1))

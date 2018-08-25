@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package gateway
 
@@ -11,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func TestTabletStatusAggregator(t *testing.T) {
@@ -22,7 +34,6 @@ func TestTabletStatusAggregator(t *testing.T) {
 		Name:       "n",
 		Addr:       "a",
 	}
-	t.Logf("aggr = TabletStatusAggregator{k, s, replica, n, a}")
 	qi := &queryInfo{
 		aggr:       aggr,
 		addr:       "",
@@ -31,9 +42,7 @@ func TestTabletStatusAggregator(t *testing.T) {
 		hasError:   false,
 	}
 	aggr.processQueryInfo(qi)
-	t.Logf("aggr.processQueryInfo(, replica, 10ms, false)")
 	aggr.resetNextSlot()
-	t.Logf("aggr.resetNextSlot()")
 	qi = &queryInfo{
 		aggr:       aggr,
 		addr:       "",
@@ -42,7 +51,6 @@ func TestTabletStatusAggregator(t *testing.T) {
 		hasError:   false,
 	}
 	aggr.processQueryInfo(qi)
-	t.Logf("aggr.processQueryInfo(, replica, 8ms, false)")
 	qi = &queryInfo{
 		aggr:       aggr,
 		addr:       "",
@@ -51,7 +59,6 @@ func TestTabletStatusAggregator(t *testing.T) {
 		hasError:   true,
 	}
 	aggr.processQueryInfo(qi)
-	t.Logf("aggr.processQueryInfo(, replica, 3ms, true)")
 	want := &TabletCacheStatus{
 		Keyspace:   "k",
 		Shard:      "s",
@@ -60,18 +67,17 @@ func TestTabletStatusAggregator(t *testing.T) {
 		Addr:       "a",
 		QueryCount: 3,
 		QueryError: 1,
-		QPS:        0,
+		QPS:        0.05,
 		AvgLatency: 7,
 	}
 	got := aggr.GetCacheStatus()
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("aggr.GetCacheStatus() = %+v, want %+v", got, want)
+		t.Errorf("aggr.GetCacheStatus() =\n%+v, want =\n%+v", got, want)
 	}
 	// reset values in idx=0
 	for i := 0; i < 59; i++ {
 		aggr.resetNextSlot()
 	}
-	t.Logf("59 aggr.resetNextSlot()")
 	qi = &queryInfo{
 		aggr:       aggr,
 		addr:       "b",
@@ -80,7 +86,6 @@ func TestTabletStatusAggregator(t *testing.T) {
 		hasError:   false,
 	}
 	aggr.processQueryInfo(qi)
-	t.Logf("aggr.processQueryInfo(b, master, 9ms, false)")
 	qi = &queryInfo{
 		aggr:       aggr,
 		addr:       "",
@@ -89,7 +94,6 @@ func TestTabletStatusAggregator(t *testing.T) {
 		hasError:   true,
 	}
 	aggr.processQueryInfo(qi)
-	t.Logf("aggr.processQueryInfo(, master, 6ms, true)")
 	want = &TabletCacheStatus{
 		Keyspace:   "k",
 		Shard:      "s",
@@ -98,12 +102,12 @@ func TestTabletStatusAggregator(t *testing.T) {
 		Addr:       "b",
 		QueryCount: 2,
 		QueryError: 1,
-		QPS:        0,
+		QPS:        0.03333333333333333,
 		AvgLatency: 7.5,
 	}
 	got = aggr.GetCacheStatus()
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("aggr.GetCacheStatus() = %+v, want %+v", got, want)
+		t.Errorf("aggr.GetCacheStatus() =\n%+v, want =\n%+v", got, want)
 	}
 
 	// Make sure the HTML rendering of the cache works.

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.client.cursor;
 
 import static com.google.common.base.Preconditions.checkArgument;
@@ -5,11 +21,9 @@ import static com.google.common.base.Preconditions.checkArgument;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.UnsignedLong;
 import com.google.protobuf.ByteString;
-import io.vitess.mysql.DateTime;
-import io.vitess.proto.Query;
-import io.vitess.proto.Query.Field;
-import io.vitess.proto.Query.Type;
+import java.io.InputStream;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.Date;
 import java.sql.SQLDataException;
 import java.sql.SQLException;
@@ -20,6 +34,11 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import javax.annotation.concurrent.NotThreadSafe;
+
+import io.vitess.mysql.DateTime;
+import io.vitess.proto.Query;
+import io.vitess.proto.Query.Field;
+import io.vitess.proto.Query.Type;
 
 /**
  * Type-converting wrapper around raw {@link io.vitess.proto.Query.Row} proto.
@@ -168,6 +187,28 @@ public class Row {
   }
 
   /**
+   * Returns the data at a given index as an InputStream.
+   *
+   * @param columnLabel case-insensitive column label
+   */
+  public InputStream getBinaryInputStream(String columnLabel) throws SQLException {
+    return getBinaryInputStream(findColumn(columnLabel));
+  }
+
+  /**
+   * Returns the data at a given index as an InputStream.
+   *
+   * @param columnIndex 1-based column number (0 is invalid)
+   */
+  public InputStream getBinaryInputStream(int columnIndex) throws SQLException {
+    ByteString rawValue = getRawValue(columnIndex);
+    if (rawValue == null) {
+      return null;
+    }
+    return rawValue.newInput();
+  }
+
+  /**
    * Returns the column value, or 0 if the value is SQL NULL.
    *
    * <p>
@@ -205,7 +246,8 @@ public class Row {
    * @param columnIndex 1-based column number (0 is invalid)
    */
   public UnsignedLong getULong(int columnIndex) throws SQLException {
-    return getObject(columnIndex, UnsignedLong.class);
+    BigInteger l = getObject(columnIndex, BigInteger.class);
+    return l == null ? null : UnsignedLong.fromLongBits(l.longValue());
   }
 
   /**
@@ -609,7 +651,7 @@ public class Row {
       case INT64:
         return Long.valueOf(value.toStringUtf8());
       case UINT64:
-        return UnsignedLong.valueOf(value.toStringUtf8());
+        return new BigInteger(value.toStringUtf8());
       case FLOAT32:
         return Float.valueOf(value.toStringUtf8());
       case FLOAT64:

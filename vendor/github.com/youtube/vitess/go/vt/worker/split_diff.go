@@ -1,27 +1,40 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
 import (
 	"fmt"
 	"html/template"
+	"sort"
 	"sync"
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/mysqlctl/tmutils"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/vtgate/vindexes"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/mysqlctl/tmutils"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vtgate/vindexes"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // SplitDiffWorker executes a diff between a destination shard and its
@@ -36,6 +49,7 @@ type SplitDiffWorker struct {
 	sourceUID               uint32
 	excludeTables           []string
 	minHealthyRdonlyTablets int
+	parallelDiffsCount      int
 	cleaner                 *wrangler.Cleaner
 
 	// populated during WorkerStateInit, read-only after that
@@ -52,7 +66,7 @@ type SplitDiffWorker struct {
 }
 
 // NewSplitDiffWorker returns a new SplitDiffWorker object.
-func NewSplitDiffWorker(wr *wrangler.Wrangler, cell, keyspace, shard string, sourceUID uint32, excludeTables []string, minHealthyRdonlyTablets int) Worker {
+func NewSplitDiffWorker(wr *wrangler.Wrangler, cell, keyspace, shard string, sourceUID uint32, excludeTables []string, minHealthyRdonlyTablets, parallelDiffsCount int) Worker {
 	return &SplitDiffWorker{
 		StatusWorker:            NewStatusWorker(),
 		wr:                      wr,
@@ -62,6 +76,7 @@ func NewSplitDiffWorker(wr *wrangler.Wrangler, cell, keyspace, shard string, sou
 		sourceUID:               sourceUID,
 		excludeTables:           excludeTables,
 		minHealthyRdonlyTablets: minHealthyRdonlyTablets,
+		parallelDiffsCount:      parallelDiffsCount,
 		cleaner:                 &wrangler.Cleaner{},
 	}
 }
@@ -112,6 +127,7 @@ func (sdw *SplitDiffWorker) Run(ctx context.Context) error {
 		}
 	}
 	if err != nil {
+		sdw.wr.Logger().Errorf("Run() error: %v", err)
 		sdw.SetState(WorkerStateError)
 		return err
 	}
@@ -414,14 +430,30 @@ func (sdw *SplitDiffWorker) diff(ctx context.Context) error {
 
 	// run the diffs, 8 at a time
 	sdw.wr.Logger().Infof("Running the diffs...")
-	// TODO(mberlin): Parameterize the hard coded value 8.
-	sem := sync2.NewSemaphore(8, 0)
-	for _, tableDefinition := range sdw.destinationSchemaDefinition.TableDefinitions {
+	sem := sync2.NewSemaphore(sdw.parallelDiffsCount, 0)
+	tableDefinitions := sdw.destinationSchemaDefinition.TableDefinitions
+
+	// sort tables by size
+	// if there are large deltas between table sizes then it's more efficient to start working on the large tables first
+	sort.Slice(tableDefinitions, func(i, j int) bool { return tableDefinitions[i].DataLength > tableDefinitions[j].DataLength })
+
+	// use a channel to make sure tables are diffed in order
+	tableChan := make(chan *tabletmanagerdatapb.TableDefinition, len(tableDefinitions))
+	for _, tableDefinition := range tableDefinitions {
+		tableChan <- tableDefinition
+	}
+
+	// start as many goroutines as there are tables to diff
+	for range tableDefinitions {
 		wg.Add(1)
-		go func(tableDefinition *tabletmanagerdatapb.TableDefinition) {
+		go func() {
 			defer wg.Done()
+			// use the semaphore to limit the number of tables that are diffed in parallel
 			sem.Acquire()
 			defer sem.Release()
+
+			// grab the table to process out of the channel
+			tableDefinition := <-tableChan
 
 			sdw.wr.Logger().Infof("Starting the diff on table %v", tableDefinition.Name)
 
@@ -481,8 +513,10 @@ func (sdw *SplitDiffWorker) diff(ctx context.Context) error {
 					sdw.wr.Logger().Infof("Table %v checks out (%v rows processed, %v qps)", tableDefinition.Name, report.processedRows, report.processingQPS)
 				}
 			}
-		}(tableDefinition)
+		}()
 	}
+
+	// grab the table to process out of the channel
 	wg.Wait()
 
 	return rec.Error()

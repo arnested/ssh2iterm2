@@ -1,5 +1,20 @@
 #!/usr/bin/env python
 
+# Copyright 2017 Google Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 import os
 
 import logging
@@ -237,7 +252,7 @@ class TestSchema(unittest.TestCase):
     consider previous statements within the same ApplySchema command. For
     example, a CREATE after DROP must not fail: When CREATE is checked, DROP
     must have been executed first.
-    See: https://github.com/youtube/vitess/issues/1731#issuecomment-222914389
+    See: https://github.com/vitessio/vitess/issues/1731#issuecomment-222914389
     """
     self._apply_initial_schema()
     self._check_tables(shard_0_master, 4)
@@ -350,8 +365,7 @@ class TestSchema(unittest.TestCase):
                                    'test_keyspace/2'],
                                   expect_fail=True,
                                   auto_log=True)
-      self.assertIn('source and dest don\'t agree on database creation command',
-                    stderr)
+      self.assertIn('schemas are different', stderr)
 
       # shard_2_master should have the same number of tables. Only the db
       # character set is different.

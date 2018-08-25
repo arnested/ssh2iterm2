@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -15,15 +27,14 @@ import (
 
 	"golang.org/x/net/context"
 
-	log "github.com/golang/glog"
-
-	"github.com/youtube/vitess/go/tb"
-	"github.com/youtube/vitess/go/vt/logutil"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/vterrors"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/tb"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/wrangler"
 )
 
 // Instance encapsulate the execution state of vtworker.
@@ -49,13 +60,13 @@ type Instance struct {
 	lastRunError        error
 	lastRunStopTime     time.Time
 
-	topoServer             topo.Server
+	topoServer             *topo.Server
 	cell                   string
 	commandDisplayInterval time.Duration
 }
 
 // NewInstance creates a new Instance.
-func NewInstance(ts topo.Server, cell string, commandDisplayInterval time.Duration) *Instance {
+func NewInstance(ts *topo.Server, cell string, commandDisplayInterval time.Duration) *Instance {
 	wi := &Instance{topoServer: ts, cell: cell, commandDisplayInterval: commandDisplayInterval}
 	// Note: setAndStartWorker() also adds a MemoryLogger for the webserver.
 	wi.wr = wi.CreateWrangler(logutil.NewConsoleLogger())
@@ -80,15 +91,25 @@ func (wi *Instance) setAndStartWorker(ctx context.Context, wrk Worker, wr *wrang
 
 	if wi.currentWorker != nil {
 		// During the grace period, we answer with a retryable error.
+		// This way any automation can retry to issue 'Reset' and then the original
+		// command. We can end up in this situation when the automation job was
+		// restarted and therefore the previously running vtworker command was
+		// canceled.
+		// TODO(mberlin): This can be simplified when we move to a model where
+		// vtworker runs commands independent of an RPC and the automation polls for
+		// the current status, based on an assigned unique id, instead.
 		const gracePeriod = 1 * time.Minute
-		gracePeriodEnd := time.Now().Add(gracePeriod)
-		if wi.lastRunStopTime.Before(gracePeriodEnd) {
-			return nil, vterrors.Errorf(vtrpcpb.Code_UNAVAILABLE, "A worker job was recently stopped (%f seconds ago): %v", time.Now().Sub(wi.lastRunStopTime).Seconds(), wi.currentWorker)
+		sinceLastStop := time.Since(wi.lastRunStopTime)
+		if sinceLastStop <= gracePeriod {
+			return nil, vterrors.Errorf(vtrpcpb.Code_UNAVAILABLE,
+				"A worker job was recently stopped (%f seconds ago): If you run commands manually, run the 'Reset' command to clear the vtworker state. Job: %v",
+				sinceLastStop.Seconds(),
+				wi.currentWorker)
 		}
 
-		// QUERY_NOT_SERVED = FailedPrecondition => manual resolution required.
+		// We return FAILED_PRECONDITION to signal that a manual resolution is required.
 		return nil, vterrors.Errorf(vtrpcpb.Code_FAILED_PRECONDITION,
-			"The worker job was stopped %.1f minutes ago, but not reset. You have to reset it manually. Job: %v",
+			"The worker job was stopped %.1f minutes ago, but not reset. Run the 'Reset' command to clear it manually. Job: %v",
 			time.Now().Sub(wi.lastRunStopTime).Minutes(),
 			wi.currentWorker)
 	}

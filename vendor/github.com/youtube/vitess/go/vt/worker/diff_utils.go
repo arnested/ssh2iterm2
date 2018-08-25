@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -17,18 +29,20 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/key"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/vtgate/vindexes"
-	"github.com/youtube/vitess/go/vt/vttablet/queryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletconn"
+	"vitess.io/vitess/go/sqlescape"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/grpcclient"
+	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vtgate/vindexes"
+	"vitess.io/vitess/go/vt/vttablet/queryservice"
+	"vitess.io/vitess/go/vt/vttablet/tabletconn"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // QueryResultReader will stream rows towards the output channel.
@@ -43,7 +57,7 @@ type QueryResultReader struct {
 
 // NewQueryResultReaderForTablet creates a new QueryResultReader for
 // the provided tablet / sql query
-func NewQueryResultReaderForTablet(ctx context.Context, ts topo.Server, tabletAlias *topodatapb.TabletAlias, sql string) (*QueryResultReader, error) {
+func NewQueryResultReaderForTablet(ctx context.Context, ts *topo.Server, tabletAlias *topodatapb.TabletAlias, sql string) (*QueryResultReader, error) {
 	shortCtx, cancel := context.WithTimeout(ctx, *remoteActionsTimeout)
 	tablet, err := ts.GetTablet(shortCtx, tabletAlias)
 	cancel()
@@ -51,7 +65,7 @@ func NewQueryResultReaderForTablet(ctx context.Context, ts topo.Server, tabletAl
 		return nil, err
 	}
 
-	conn, err := tabletconn.GetDialer()(tablet.Tablet, *remoteActionsTimeout)
+	conn, err := tabletconn.GetDialer()(tablet.Tablet, grpcclient.FailFast(false))
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +74,7 @@ func NewQueryResultReaderForTablet(ctx context.Context, ts topo.Server, tabletAl
 		Keyspace:   tablet.Tablet.Keyspace,
 		Shard:      tablet.Tablet.Shard,
 		TabletType: tablet.Tablet.Type,
-	}, sql, make(map[string]interface{}), nil)
+	}, sql, make(map[string]*querypb.BindVariable), nil)
 
 	// read the columns, or grab the error
 	cols, err := stream.Recv()
@@ -176,9 +190,12 @@ func uint64FromKeyspaceID(keyspaceID []byte) uint64 {
 // TableScan returns a QueryResultReader that gets all the rows from a
 // table, ordered by Primary Key. The returned columns are ordered
 // with the Primary Key columns in front.
-func TableScan(ctx context.Context, log logutil.Logger, ts topo.Server, tabletAlias *topodatapb.TabletAlias, tableDefinition *tabletmanagerdatapb.TableDefinition) (*QueryResultReader, error) {
-	sql := fmt.Sprintf("SELECT %v FROM %v ORDER BY %v", strings.Join(escapeAll(orderedColumns(tableDefinition)), ", "), escape(tableDefinition.Name), strings.Join(escapeAll(tableDefinition.PrimaryKeyColumns), ", "))
-	log.Infof("SQL query for %v/%v: %v", topoproto.TabletAliasString(tabletAlias), tableDefinition.Name, sql)
+func TableScan(ctx context.Context, log logutil.Logger, ts *topo.Server, tabletAlias *topodatapb.TabletAlias, td *tabletmanagerdatapb.TableDefinition) (*QueryResultReader, error) {
+	sql := fmt.Sprintf("SELECT %v FROM %v", strings.Join(escapeAll(orderedColumns(td)), ", "), sqlescape.EscapeID(td.Name))
+	if len(td.PrimaryKeyColumns) > 0 {
+		sql += fmt.Sprintf(" ORDER BY %v", strings.Join(escapeAll(td.PrimaryKeyColumns), ", "))
+	}
+	log.Infof("SQL query for %v/%v: %v", topoproto.TabletAliasString(tabletAlias), td.Name, sql)
 	return NewQueryResultReaderForTablet(ctx, ts, tabletAlias, sql)
 }
 
@@ -189,16 +206,16 @@ func TableScan(ctx context.Context, log logutil.Logger, ts topo.Server, tabletAl
 // If keyspaceSchema is passed in, we go into v3 mode, and we ask for all
 // source data, and filter here. Otherwise we stick with v2 mode, where we can
 // ask the source tablet to do the filtering.
-func TableScanByKeyRange(ctx context.Context, log logutil.Logger, ts topo.Server, tabletAlias *topodatapb.TabletAlias, tableDefinition *tabletmanagerdatapb.TableDefinition, keyRange *topodatapb.KeyRange, keyspaceSchema *vindexes.KeyspaceSchema, shardingColumnName string, shardingColumnType topodatapb.KeyspaceIdType) (*QueryResultReader, error) {
+func TableScanByKeyRange(ctx context.Context, log logutil.Logger, ts *topo.Server, tabletAlias *topodatapb.TabletAlias, td *tabletmanagerdatapb.TableDefinition, keyRange *topodatapb.KeyRange, keyspaceSchema *vindexes.KeyspaceSchema, shardingColumnName string, shardingColumnType topodatapb.KeyspaceIdType) (*QueryResultReader, error) {
 	if keyspaceSchema != nil {
 		// switch to v3 mode.
-		keyResolver, err := newV3ResolverFromColumnList(keyspaceSchema, tableDefinition.Name, orderedColumns(tableDefinition))
+		keyResolver, err := newV3ResolverFromColumnList(keyspaceSchema, td.Name, orderedColumns(td))
 		if err != nil {
-			return nil, fmt.Errorf("cannot resolve v3 sharding keys for table %v: %v", tableDefinition.Name, err)
+			return nil, fmt.Errorf("cannot resolve v3 sharding keys for table %v: %v", td.Name, err)
 		}
 
 		// full table scan
-		scan, err := TableScan(ctx, log, ts, tabletAlias, tableDefinition)
+		scan, err := TableScan(ctx, log, ts, tabletAlias, td)
 		if err != nil {
 			return nil, err
 		}
@@ -219,38 +236,41 @@ func TableScanByKeyRange(ctx context.Context, log logutil.Logger, ts topo.Server
 		if len(keyRange.Start) > 0 {
 			if len(keyRange.End) > 0 {
 				// have start & end
-				where = fmt.Sprintf("WHERE %v >= %v AND %v < %v ", escape(shardingColumnName), uint64FromKeyspaceID(keyRange.Start), escape(shardingColumnName), uint64FromKeyspaceID(keyRange.End))
+				where = fmt.Sprintf("WHERE %v >= %v AND %v < %v", sqlescape.EscapeID(shardingColumnName), uint64FromKeyspaceID(keyRange.Start), sqlescape.EscapeID(shardingColumnName), uint64FromKeyspaceID(keyRange.End))
 			} else {
 				// have start only
-				where = fmt.Sprintf("WHERE %v >= %v ", escape(shardingColumnName), uint64FromKeyspaceID(keyRange.Start))
+				where = fmt.Sprintf("WHERE %v >= %v", sqlescape.EscapeID(shardingColumnName), uint64FromKeyspaceID(keyRange.Start))
 			}
 		} else {
 			if len(keyRange.End) > 0 {
 				// have end only
-				where = fmt.Sprintf("WHERE %v < %v ", escape(shardingColumnName), uint64FromKeyspaceID(keyRange.End))
+				where = fmt.Sprintf("WHERE %v < %v", sqlescape.EscapeID(shardingColumnName), uint64FromKeyspaceID(keyRange.End))
 			}
 		}
 	case topodatapb.KeyspaceIdType_BYTES:
 		if len(keyRange.Start) > 0 {
 			if len(keyRange.End) > 0 {
 				// have start & end
-				where = fmt.Sprintf("WHERE HEX(%v) >= '%v' AND HEX(%v) < '%v' ", escape(shardingColumnName), hex.EncodeToString(keyRange.Start), escape(shardingColumnName), hex.EncodeToString(keyRange.End))
+				where = fmt.Sprintf("WHERE HEX(%v) >= '%v' AND HEX(%v) < '%v'", sqlescape.EscapeID(shardingColumnName), hex.EncodeToString(keyRange.Start), sqlescape.EscapeID(shardingColumnName), hex.EncodeToString(keyRange.End))
 			} else {
 				// have start only
-				where = fmt.Sprintf("WHERE HEX(%v) >= '%v' ", escape(shardingColumnName), hex.EncodeToString(keyRange.Start))
+				where = fmt.Sprintf("WHERE HEX(%v) >= '%v'", sqlescape.EscapeID(shardingColumnName), hex.EncodeToString(keyRange.Start))
 			}
 		} else {
 			if len(keyRange.End) > 0 {
 				// have end only
-				where = fmt.Sprintf("WHERE HEX(%v) < '%v' ", escape(shardingColumnName), hex.EncodeToString(keyRange.End))
+				where = fmt.Sprintf("WHERE HEX(%v) < '%v'", sqlescape.EscapeID(shardingColumnName), hex.EncodeToString(keyRange.End))
 			}
 		}
 	default:
 		return nil, fmt.Errorf("Unsupported ShardingColumnType: %v", shardingColumnType)
 	}
 
-	sql := fmt.Sprintf("SELECT %v FROM %v %vORDER BY %v", strings.Join(escapeAll(orderedColumns(tableDefinition)), ", "), escape(tableDefinition.Name), where, strings.Join(escapeAll(tableDefinition.PrimaryKeyColumns), ", "))
-	log.Infof("SQL query for %v/%v: %v", topoproto.TabletAliasString(tabletAlias), tableDefinition.Name, sql)
+	sql := fmt.Sprintf("SELECT %v FROM %v %v", strings.Join(escapeAll(orderedColumns(td)), ", "), sqlescape.EscapeID(td.Name), where)
+	if len(td.PrimaryKeyColumns) > 0 {
+		sql += fmt.Sprintf(" ORDER BY %v", strings.Join(escapeAll(td.PrimaryKeyColumns), ", "))
+	}
+	log.Infof("SQL query for %v/%v: %v", topoproto.TabletAliasString(tabletAlias), td.Name, sql)
 	return NewQueryResultReaderForTablet(ctx, ts, tabletAlias, sql)
 }
 
@@ -380,8 +400,8 @@ func RowsEqual(left, right []sqltypes.Value) int {
 // TODO: This can panic if types for left and right don't match.
 func CompareRows(fields []*querypb.Field, compareCount int, left, right []sqltypes.Value) (int, error) {
 	for i := 0; i < compareCount; i++ {
-		lv := left[i].ToNative()
-		rv := right[i].ToNative()
+		lv, _ := sqltypes.ToNative(left[i])
+		rv, _ := sqltypes.ToNative(right[i])
 		switch l := lv.(type) {
 		case int64:
 			r := rv.(int64)

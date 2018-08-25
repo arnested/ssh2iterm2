@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 /*
 Package grpcvtworkerserver contains the gRPC implementation of the server side
@@ -9,16 +21,18 @@ of the remote execution of vtworker commands.
 package grpcvtworkerserver
 
 import (
+	"sync"
+
 	"google.golang.org/grpc"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/servenv"
-	"github.com/youtube/vitess/go/vt/vterrors"
-	"github.com/youtube/vitess/go/vt/worker"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/servenv"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/worker"
 
-	logutilpb "github.com/youtube/vitess/go/vt/proto/logutil"
-	vtworkerdatapb "github.com/youtube/vitess/go/vt/proto/vtworkerdata"
-	vtworkerservicepb "github.com/youtube/vitess/go/vt/proto/vtworkerservice"
+	logutilpb "vitess.io/vitess/go/vt/proto/logutil"
+	vtworkerdatapb "vitess.io/vitess/go/vt/proto/vtworkerdata"
+	vtworkerservicepb "vitess.io/vitess/go/vt/proto/vtworkerservice"
 )
 
 // VtworkerServer is our RPC server
@@ -39,10 +53,16 @@ func (s *VtworkerServer) ExecuteVtworkerCommand(args *vtworkerdatapb.ExecuteVtwo
 	defer servenv.HandlePanic("vtworker", &err)
 
 	// Stream everything back what the Wrangler is logging.
+	// We may execute this in parallel (inside multiple go routines),
+	// but the stream.Send() method is not thread safe in gRPC.
+	// So use a mutex to protect it.
+	mu := sync.Mutex{}
 	logstream := logutil.NewCallbackLogger(func(e *logutilpb.Event) {
+		mu.Lock()
 		stream.Send(&vtworkerdatapb.ExecuteVtworkerCommandResponse{
 			Event: e,
 		})
+		mu.Unlock()
 	})
 	// Let the Wrangler also log everything to the console (and thereby
 	// effectively to a logfile) to make sure that any information or errors

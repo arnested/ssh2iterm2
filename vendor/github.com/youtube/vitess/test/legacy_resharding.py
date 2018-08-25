@@ -1,8 +1,18 @@
 #!/usr/bin/env python
 #
-# Copyright 2013, Google Inc. All rights reserved.
-# Use of this source code is governed by a BSD-style license that can
-# be found in the LICENSE file.
+# Copyright 2017 Google Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # TODO(mberlin): Remove this file when SplitClone supports merge-sorting
 # primary key columns based on the MySQL collation.
@@ -14,7 +24,7 @@ reshard a table that has textual primary key columns (e.g. VARCHAR).
 This is the case for the "timestamps" table in this end-to-end test.
 
 The reason why only LegacySplitClone supports this use case is because the new
-resharding clone code (as of https://github.com/youtube/vitess/pull/1796)
+resharding clone code (as of https://github.com/vitessio/vitess/pull/1796)
 requires to sort rows by their primary key. Whereas LegacySplitClone does a
 simple copy and always assumes that the tables on the destination are empty,
 the SplitClone command can diff the source and destination tables. In case of
@@ -275,7 +285,8 @@ primary key (name)
               shard_1_master, shard_1_slave1, shard_1_slave2, shard_1_ny_rdonly,
               shard_1_rdonly1]:
       t.create_db('vt_test_keyspace')
-      t.start_vttablet(wait_for_state=None, full_mycnf_args=full_mycnf_args)
+      t.start_vttablet(wait_for_state=None, full_mycnf_args=full_mycnf_args,
+                       binlog_use_v3_resharding_mode=False)
 
     # wait for the tablets (replication is not setup, they won't be healthy)
     for t in [shard_0_master, shard_0_replica, shard_0_ny_rdonly,
@@ -316,11 +327,14 @@ primary key (name)
 
     # start vttablet on the split shards (no db created,
     # so they're all not serving)
-    shard_2_master.start_vttablet(wait_for_state=None)
-    shard_3_master.start_vttablet(wait_for_state=None)
+    shard_2_master.start_vttablet(wait_for_state=None,
+                                  binlog_use_v3_resharding_mode=False)
+    shard_3_master.start_vttablet(wait_for_state=None,
+                                  binlog_use_v3_resharding_mode=False)
     for t in [shard_2_replica1, shard_2_replica2,
               shard_3_replica, shard_3_rdonly1]:
-      t.start_vttablet(wait_for_state=None)
+      t.start_vttablet(wait_for_state=None,
+                       binlog_use_v3_resharding_mode=False)
     for t in [shard_2_master, shard_2_replica1, shard_2_replica2,
               shard_3_master, shard_3_replica, shard_3_rdonly1]:
       t.wait_for_vttablet_state('NOT_SERVING')
@@ -362,6 +376,7 @@ primary key (name)
     # the rate limit is set very high.
     utils.run_vtworker(['--cell', 'test_nj',
                         '--command_display_interval', '10ms',
+                        '--use_v3_resharding_mode=false',
                         'LegacySplitClone',
                         '--exclude_tables', 'unrelated',
                         '--min_healthy_rdonly_tablets', '1',
@@ -418,7 +433,9 @@ primary key (name)
     # rdonly tablets so discovery works)
     utils.run_vtctl(['RunHealthCheck', shard_3_rdonly1.tablet_alias])
     logging.debug('Running vtworker SplitDiff')
-    utils.run_vtworker(['-cell', 'test_nj', 'SplitDiff',
+    utils.run_vtworker(['-cell', 'test_nj',
+                        '--use_v3_resharding_mode=false',
+                        'SplitDiff',
                         '--exclude_tables', 'unrelated',
                         '--min_healthy_rdonly_tablets', '1',
                         'test_keyspace/c0-'],
@@ -560,7 +577,9 @@ primary key (name)
 
     # use vtworker to compare the data again
     logging.debug('Running vtworker SplitDiff')
-    utils.run_vtworker(['-cell', 'test_nj', 'SplitDiff',
+    utils.run_vtworker(['-cell', 'test_nj',
+                        '--use_v3_resharding_mode=false',
+                        'SplitDiff',
                         '--exclude_tables', 'unrelated',
                         '--min_healthy_rdonly_tablets', '1',
                         'test_keyspace/c0-'],
@@ -616,7 +635,7 @@ primary key (name)
     utils.run_vtctl(
         ['RemoveShardCell', 'test_keyspace/80-', 'test_ny'], auto_log=True)
     shard = utils.run_vtctl_json(['GetShard', 'test_keyspace/80-'])
-    self.assertNotIn('cells', shard)
+    self.assertTrue('cells' not in shard or not shard['cells'])
 
     # delete the original shard
     utils.run_vtctl(['DeleteShard', 'test_keyspace/80-'], auto_log=True)

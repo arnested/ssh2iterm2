@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package queryservice contains the interface for the service definition
 // of the Query Service.
@@ -11,10 +23,9 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/querytypes"
+	"vitess.io/vitess/go/sqltypes"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 // QueryService is the interface implemented by the tablet's query service.
@@ -29,7 +40,7 @@ type QueryService interface {
 	// Transaction management
 
 	// Begin returns the transaction id to use for further operations
-	Begin(ctx context.Context, target *querypb.Target) (int64, error)
+	Begin(ctx context.Context, target *querypb.Target, options *querypb.ExecuteOptions) (int64, error)
 
 	// Commit commits the current transaction
 	Commit(ctx context.Context, target *querypb.Target, transactionID int64) error
@@ -65,16 +76,16 @@ type QueryService interface {
 	ReadTransaction(ctx context.Context, target *querypb.Target, dtid string) (metadata *querypb.TransactionMetadata, err error)
 
 	// Query execution
-	Execute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, transactionID int64, options *querypb.ExecuteOptions) (*sqltypes.Result, error)
-	StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions, callback func(*sqltypes.Result) error) error
-	ExecuteBatch(ctx context.Context, target *querypb.Target, queries []querytypes.BoundQuery, asTransaction bool, transactionID int64, options *querypb.ExecuteOptions) ([]sqltypes.Result, error)
+	Execute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, transactionID int64, options *querypb.ExecuteOptions) (*sqltypes.Result, error)
+	StreamExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, options *querypb.ExecuteOptions, callback func(*sqltypes.Result) error) error
+	ExecuteBatch(ctx context.Context, target *querypb.Target, queries []*querypb.BoundQuery, asTransaction bool, transactionID int64, options *querypb.ExecuteOptions) ([]sqltypes.Result, error)
 
 	// Combo methods, they also return the transactionID from the
 	// Begin part. If err != nil, the transactionID may still be
 	// non-zero, and needs to be propagated back (like for a DB
 	// Integrity Error)
-	BeginExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error)
-	BeginExecuteBatch(ctx context.Context, target *querypb.Target, queries []querytypes.BoundQuery, asTransaction bool, options *querypb.ExecuteOptions) ([]sqltypes.Result, int64, error)
+	BeginExecute(ctx context.Context, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, options *querypb.ExecuteOptions) (*sqltypes.Result, int64, error)
+	BeginExecuteBatch(ctx context.Context, target *querypb.Target, queries []*querypb.BoundQuery, asTransaction bool, options *querypb.ExecuteOptions) ([]sqltypes.Result, int64, error)
 
 	// Messaging methods.
 	MessageStream(ctx context.Context, target *querypb.Target, name string, callback func(*sqltypes.Result) error) error
@@ -83,7 +94,7 @@ type QueryService interface {
 	// SplitQuery is a MapReduce helper function
 	// This version of SplitQuery supports multiple algorithms and multiple split columns.
 	// See the documentation of SplitQueryRequest in 'proto/vtgate.proto' for more information.
-	SplitQuery(ctx context.Context, target *querypb.Target, query querytypes.BoundQuery, splitColumns []string, splitCount int64, numRowsPerQueryPart int64, algorithm querypb.SplitQueryRequest_Algorithm) ([]querytypes.QuerySplit, error)
+	SplitQuery(ctx context.Context, target *querypb.Target, query *querypb.BoundQuery, splitColumns []string, splitCount int64, numRowsPerQueryPart int64, algorithm querypb.SplitQueryRequest_Algorithm) ([]*querypb.QuerySplit, error)
 
 	// UpdateStream streams updates from the provided position or timestamp.
 	UpdateStream(ctx context.Context, target *querypb.Target, position string, timestamp int64, callback func(*querypb.StreamEvent) error) error
@@ -115,7 +126,7 @@ func (rs *resultStreamer) Recv() (*sqltypes.Result, error) {
 
 // ExecuteWithStreamer performs a StreamExecute, but returns a *sqltypes.ResultStream to iterate on.
 // This function should only be used for legacy code. New usage should directly use StreamExecute.
-func ExecuteWithStreamer(ctx context.Context, conn QueryService, target *querypb.Target, sql string, bindVariables map[string]interface{}, options *querypb.ExecuteOptions) sqltypes.ResultStream {
+func ExecuteWithStreamer(ctx context.Context, conn QueryService, target *querypb.Target, sql string, bindVariables map[string]*querypb.BindVariable, options *querypb.ExecuteOptions) sqltypes.ResultStream {
 	rs := &resultStreamer{
 		done: make(chan struct{}),
 		ch:   make(chan *sqltypes.Result),

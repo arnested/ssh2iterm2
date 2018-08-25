@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package vtworkerclienttest contains the testsuite against which each
 // RPC implementation of the vtworkerclient interface must be tested.
@@ -23,18 +35,18 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/vterrors"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/worker"
-	"github.com/youtube/vitess/go/vt/worker/vtworkerclient"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/worker"
+	"vitess.io/vitess/go/vt/worker/vtworkerclient"
 
 	// Import the gRPC client implementation for tablet manager because the real
 	// vtworker implementation requires it.
-	_ "github.com/youtube/vitess/go/vt/vttablet/grpctmclient"
+	_ "vitess.io/vitess/go/vt/vttablet/grpctmclient"
 
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 func init() {
@@ -101,7 +113,7 @@ func runVtworkerCommand(client vtworkerclient.Client, args []string) error {
 		case io.EOF:
 			return nil
 		default:
-			return vterrors.Errorf(vterrors.Code(err), "unexpected error when reading the stream: %v", err)
+			return vterrors.Wrap(err, "unexpected error when reading the stream")
 		}
 	}
 }

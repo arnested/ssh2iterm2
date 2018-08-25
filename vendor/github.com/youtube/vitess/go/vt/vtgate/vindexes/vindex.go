@@ -1,13 +1,28 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package vindexes
 
 import (
 	"fmt"
 
-	"github.com/youtube/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/key"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 // This file defines interfaces and registration for vindexes.
@@ -16,18 +31,18 @@ import (
 // in the current context and session of a VTGate request. Vindexes
 // can use this interface to execute lookup queries.
 type VCursor interface {
-	Execute(query string, bindvars map[string]interface{}) (*sqltypes.Result, error)
+	Execute(method string, query string, bindvars map[string]*querypb.BindVariable, isDML bool) (*sqltypes.Result, error)
+	ExecuteAutocommit(method string, query string, bindvars map[string]*querypb.BindVariable, isDML bool) (*sqltypes.Result, error)
 }
 
 // Vindex defines the interface required to register a vindex.
-// Additional to these functions, a vindex also needs
-// to satisfy the Unique or NonUnique interface.
 type Vindex interface {
 	// String returns the name of the Vindex instance.
 	// It's used for testing and diagnostics. Use pointer
 	// comparison to see if two objects refer to the same
 	// Vindex.
 	String() string
+
 	// Cost is used by planbuilder to prioritize vindexes.
 	// The cost can be 0 if the id is basically a keyspace id.
 	// The cost can be 1 if the id can be hashed to a keyspace id.
@@ -36,28 +51,28 @@ type Vindex interface {
 	// to change in the future.
 	Cost() int
 
+	// IsUnique returns true if the Vindex is unique.
+	// Which means Map() maps to either a KeyRange or a single KeyspaceID.
+	IsUnique() bool
+
+	// IsFunctional returns true if the Vindex can compute
+	// the keyspace id from the id without a lookup.
+	// A Functional vindex is also required to be Unique.
+	// Which means Map() maps to either a KeyRange or a single KeyspaceID.
+	IsFunctional() bool
+
 	// Verify must be implented by all vindexes. It should return
 	// true if the ids can be mapped to the keyspace ids.
-	Verify(cursor VCursor, ids []interface{}, ksids [][]byte) (bool, error)
-}
+	Verify(cursor VCursor, ids []sqltypes.Value, ksids [][]byte) ([]bool, error)
 
-// Unique defines the interface for a unique vindex.
-// For a vindex to be unique, an id has to map to at most
-// one keyspace id.
-type Unique interface {
-	Map(cursor VCursor, ids []interface{}) ([][]byte, error)
-}
-
-// NonUnique defines the interface for a non-unique vindex.
-// This means that an id can map to multiple keyspace ids.
-type NonUnique interface {
-	Map(cursor VCursor, ids []interface{}) ([][][]byte, error)
-}
-
-// IsUnique returns true if the Vindex is Unique.
-func IsUnique(v Vindex) bool {
-	_, ok := v.(Unique)
-	return ok
+	// Map can map ids to key.Destination objects.
+	// If the Vindex is unique, each id would map to either
+	// a KeyRange, or a single KeyspaceID.
+	// If the Vindex is non-unique, each id would map to either
+	// a KeyRange, or a list of KeyspaceID.
+	// If the error returned if nil, then the array len of the
+	// key.Destination array must match len(ids).
+	Map(cursor VCursor, ids []sqltypes.Value) ([]key.Destination, error)
 }
 
 // A Reversible vindex is one that can perform a
@@ -65,16 +80,7 @@ func IsUnique(v Vindex) bool {
 // is optional. If present, VTGate can use it to
 // fill column values based on the target keyspace id.
 type Reversible interface {
-	ReverseMap(cursor VCursor, ks [][]byte) ([]interface{}, error)
-}
-
-// A Functional vindex is an index that can compute
-// the keyspace id from the id without a lookup.
-// A Functional vindex is also required to be Unique.
-// If it's not unique, we cannot determine the target shard
-// for an insert operation.
-type Functional interface {
-	Unique
+	ReverseMap(cursor VCursor, ks [][]byte) ([]sqltypes.Value, error)
 }
 
 // A Lookup vindex is one that needs to lookup
@@ -86,8 +92,14 @@ type Functional interface {
 // keyspace_id, which must be supplied, can be used
 // to determine the target shard for an insert operation.
 type Lookup interface {
-	Create(VCursor, []interface{}, [][]byte) error
-	Delete(VCursor, []interface{}, []byte) error
+	// Create creates an association between ids and ksids. If ignoreMode
+	// is true, then the Create should ignore dup key errors.
+	Create(vc VCursor, rowsColValues [][]sqltypes.Value, ksids [][]byte, ignoreMode bool) error
+
+	Delete(vc VCursor, rowsColValues [][]sqltypes.Value, ksid []byte) error
+
+	// Update replaces the mapping of old values with new values for a keyspace id.
+	Update(vc VCursor, oldValues []sqltypes.Value, ksid []byte, newValues []sqltypes.Value) error
 }
 
 // A NewVindexFunc is a function that creates a Vindex based on the
@@ -113,7 +125,7 @@ func Register(vindexType string, newVindexFunc NewVindexFunc) {
 func CreateVindex(vindexType, name string, params map[string]string) (Vindex, error) {
 	f, ok := registry[vindexType]
 	if !ok {
-		return nil, fmt.Errorf("vindexType %s not found", vindexType)
+		return nil, fmt.Errorf("vindexType %q not found", vindexType)
 	}
 	return f(name, params)
 }

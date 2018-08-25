@@ -1,22 +1,39 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package resharding
 
 import (
-	"context"
 	"flag"
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/worker/fakevtworkerclient"
-	"github.com/youtube/vitess/go/vt/worker/vtworkerclient"
-	"github.com/youtube/vitess/go/vt/workflow"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"golang.org/x/net/context"
+
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/worker/fakevtworkerclient"
+	"vitess.io/vitess/go/vt/worker/vtworkerclient"
+	"vitess.io/vitess/go/vt/workflow"
+	"vitess.io/vitess/go/vt/wrangler"
 
 	// import the gRPC client implementation for tablet manager
-	_ "github.com/youtube/vitess/go/vt/vttablet/grpctmclient"
+	_ "vitess.io/vitess/go/vt/vttablet/grpctmclient"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -110,7 +127,7 @@ func setupMockWrangler(ctrl *gomock.Controller, keyspace string) *MockResharding
 	return mockWranglerInterface
 }
 
-func setupTopology(ctx context.Context, t *testing.T, keyspace string) topo.Server {
+func setupTopology(ctx context.Context, t *testing.T, keyspace string) *topo.Server {
 	ts := memorytopo.NewServer("cell")
 	if err := ts.CreateKeyspace(ctx, keyspace, &topodatapb.Keyspace{}); err != nil {
 		t.Fatalf("CreateKeyspace: %v", err)

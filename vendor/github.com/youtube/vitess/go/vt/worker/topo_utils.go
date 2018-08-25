@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -10,15 +22,14 @@ import (
 	"math/rand"
 	"time"
 
-	log "github.com/golang/glog"
-
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/servenv"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/wrangler"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/servenv"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
@@ -37,8 +48,8 @@ var (
 func FindHealthyRdonlyTablet(ctx context.Context, wr *wrangler.Wrangler, tsc *discovery.TabletStatsCache, cell, keyspace, shard string, minHealthyRdonlyTablets int) (*topodatapb.TabletAlias, error) {
 	if tsc == nil {
 		// No healthcheck instance provided. Create one.
-		healthCheck := discovery.NewHealthCheck(*remoteActionsTimeout, *healthcheckRetryDelay, *healthCheckTimeout)
-		tsc = discovery.NewTabletStatsCache(healthCheck, cell)
+		healthCheck := discovery.NewHealthCheck(*healthcheckRetryDelay, *healthCheckTimeout)
+		tsc = discovery.NewTabletStatsCache(healthCheck, wr.TopoServer(), cell)
 		watcher := discovery.NewShardReplicationWatcher(wr.TopoServer(), healthCheck, cell, keyspace, shard, *healthCheckTopologyRefresh, discovery.DefaultTopoReadConcurrency)
 		defer watcher.Stop()
 		defer healthCheck.Close()
@@ -64,7 +75,7 @@ func waitForHealthyRdonlyTablets(ctx context.Context, wr *wrangler.Wrangler, tsc
 		cell, keyspace, shard, minHealthyRdonlyTablets, deadlineForLog.Sub(time.Now()).Seconds())
 
 	// Wait for at least one RDONLY tablet initially before checking the list.
-	if err := tsc.WaitForTablets(busywaitCtx, cell, keyspace, shard, []topodatapb.TabletType{topodatapb.TabletType_RDONLY}); err != nil {
+	if err := tsc.WaitForTablets(busywaitCtx, cell, keyspace, shard, topodatapb.TabletType_RDONLY); err != nil {
 		return nil, fmt.Errorf("error waiting for RDONLY tablets for (%v,%v/%v): %v", cell, keyspace, shard, err)
 	}
 

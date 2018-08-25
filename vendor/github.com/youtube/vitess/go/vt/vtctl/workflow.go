@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package vtctl
 
 import (
@@ -6,9 +22,8 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/servenv"
-	"github.com/youtube/vitess/go/vt/workflow"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/vt/workflow"
+	"vitess.io/vitess/go/vt/wrangler"
 )
 
 // This file contains the workflows command group for vtctl.
@@ -16,56 +31,50 @@ import (
 const workflowsGroupName = "Workflows"
 
 var (
-	// WorkflowManager contains our manager. It needs to be set before
-	// servenv.Run is called, or this command group will be disabled.
+	// WorkflowManager contains our manager. It needs to be set or else all
+	// commands will be disabled.
 	WorkflowManager *workflow.Manager
 )
 
 func init() {
-	servenv.OnRun(func() {
-		if WorkflowManager == nil {
-			return
-		}
+	addCommandGroup(workflowsGroupName)
 
-		addCommandGroup(workflowsGroupName)
+	addCommand(workflowsGroupName, command{
+		"WorkflowCreate",
+		commandWorkflowCreate,
+		"[-skip_start] <factoryName> [parameters...]",
+		"Creates the workflow with the provided parameters. The workflow is also started, unless -skip_start is specified."})
+	addCommand(workflowsGroupName, command{
+		"WorkflowStart",
+		commandWorkflowStart,
+		"<uuid>",
+		"Starts the workflow."})
+	addCommand(workflowsGroupName, command{
+		"WorkflowStop",
+		commandWorkflowStop,
+		"<uuid>",
+		"Stops the workflow."})
+	addCommand(workflowsGroupName, command{
+		"WorkflowDelete",
+		commandWorkflowDelete,
+		"<uuid>",
+		"Deletes the finished or not started workflow."})
+	addCommand(workflowsGroupName, command{
+		"WorkflowWait",
+		commandWorkflowWait,
+		"<uuid>",
+		"Waits for the workflow to finish."})
 
-		addCommand(workflowsGroupName, command{
-			"WorkflowCreate",
-			commandWorkflowCreate,
-			"[-skip_start] <factoryName> [parameters...]",
-			"Creates the workflow with the provided parameters. The workflow is also started, unless -skip_start is specified."})
-		addCommand(workflowsGroupName, command{
-			"WorkflowStart",
-			commandWorkflowStart,
-			"<uuid>",
-			"Starts the workflow."})
-		addCommand(workflowsGroupName, command{
-			"WorkflowStop",
-			commandWorkflowStop,
-			"<uuid>",
-			"Stops the workflow."})
-		addCommand(workflowsGroupName, command{
-			"WorkflowDelete",
-			commandWorkflowDelete,
-			"<uuid>",
-			"Deletes the finished or not started workflow."})
-		addCommand(workflowsGroupName, command{
-			"WorkflowWait",
-			commandWorkflowWait,
-			"<uuid>",
-			"Waits for the workflow to finish."})
-
-		addCommand(workflowsGroupName, command{
-			"WorkflowTree",
-			commandWorkflowTree,
-			"",
-			"Displays a JSON representation of the workflow tree."})
-		addCommand(workflowsGroupName, command{
-			"WorkflowAction",
-			commandWorkflowAction,
-			"<path> <name>",
-			"Sends the provided action name on the specified path."})
-	})
+	addCommand(workflowsGroupName, command{
+		"WorkflowTree",
+		commandWorkflowTree,
+		"",
+		"Displays a JSON representation of the workflow tree."})
+	addCommand(workflowsGroupName, command{
+		"WorkflowAction",
+		commandWorkflowAction,
+		"<path> <name>",
+		"Sends the provided action name on the specified path."})
 }
 
 func commandWorkflowCreate(ctx context.Context, wr *wrangler.Wrangler, subFlags *flag.FlagSet, args []string) error {

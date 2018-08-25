@@ -1,6 +1,18 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -10,9 +22,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/proto/topodata"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // TabletTracker tracks for each tablet alias how often it is currently in use
@@ -37,7 +50,7 @@ func NewTabletTracker() *TabletTracker {
 // Track will pick the least used tablet from "stats", increment its usage by 1
 // and return it.
 // "stats" must not be empty.
-func (t *TabletTracker) Track(stats []discovery.TabletStats) *topodata.Tablet {
+func (t *TabletTracker) Track(stats []discovery.TabletStats) *topodatapb.Tablet {
 	if len(stats) == 0 {
 		panic("stats must not be empty")
 	}
@@ -68,7 +81,7 @@ func (t *TabletTracker) Track(stats []discovery.TabletStats) *topodata.Tablet {
 }
 
 // Untrack decrements the usage of "alias" by 1.
-func (t *TabletTracker) Untrack(alias *topodata.TabletAlias) {
+func (t *TabletTracker) Untrack(alias *topodatapb.TabletAlias) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

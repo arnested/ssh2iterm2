@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package automation
 
@@ -9,13 +21,12 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/golang/glog"
-
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/vtctl/vtctlclient"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/vtctl/vtctlclient"
 
-	logutilpb "github.com/youtube/vitess/go/vt/proto/logutil"
+	logutilpb "vitess.io/vitess/go/vt/proto/logutil"
 )
 
 // ExecuteVtctl runs vtctl using vtctlclient. The stream of Event
@@ -33,9 +44,8 @@ func ExecuteVtctl(ctx context.Context, server string, args []string) (string, er
 
 	err := vtctlclient.RunCommandAndWait(
 		ctx, server, args,
-		// TODO(mberlin): Should these values be configurable as flags?
-		30*time.Second, // dialTimeout
-		time.Hour,      // actionTimeout
+		// TODO(mberlin): Should this value be configurable as flags?
+		time.Hour, // actionTimeout
 		loggerToBufferFunc)
 
 	endMsg := fmt.Sprintf("Executed remote vtctl command: %v server: %v err: %v", args, server, err)

@@ -1,17 +1,30 @@
-// Copyright 2016, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package gateway
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/youtube/vitess/go/stats"
+	"vitess.io/vitess/go/stats"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 const (
@@ -54,7 +67,7 @@ const (
     <td><a href="http://{{$status.Addr}}">{{$status.Name}}</a></td>
     <td>{{$status.QueryCount}}</td>
     <td>{{$status.QueryError}}</td>
-    <td>{{$status.QPS}}</td>
+    <td>{{$status.FormattedQPS}}</td>
     <td>{{$status.AvgLatency}}</td>
   </tr>
   {{end}}
@@ -71,13 +84,13 @@ var (
 	aggregators []*TabletStatusAggregator
 	// gatewayStatsChanFull tracks the number of times
 	// aggrChan becomes full.
-	gatewayStatsChanFull *stats.Int
+	gatewayStatsChanFull *stats.Counter
 )
 
 func init() {
 	// init global goroutines to aggregate stats.
 	aggrChan = make(chan *queryInfo, aggrChanSize)
-	gatewayStatsChanFull = stats.NewInt("GatewayStatsChanFullCount")
+	gatewayStatsChanFull = stats.NewCounter("GatewayStatsChanFullCount", "The number of times the queryInfo buffer becomes full")
 	go resetAggregators()
 	go processQueryInfo()
 }
@@ -122,8 +135,14 @@ type TabletCacheStatus struct {
 
 	QueryCount uint64
 	QueryError uint64
-	QPS        uint64
+	QPS        float64
 	AvgLatency float64 // in milliseconds
+}
+
+// FormattedQPS shows a 2 digit rounded value of QPS.
+// Used in the HTML template above.
+func (tcs *TabletCacheStatus) FormattedQPS() string {
+	return fmt.Sprintf("%.2f", tcs.QPS)
 }
 
 //
@@ -232,7 +251,7 @@ func (tsa *TabletStatusAggregator) GetCacheStatus() *TabletCacheStatus {
 	for _, d := range tsa.latencyInMinute {
 		totalLatency += d
 	}
-	status.QPS = totalQuery / 60
+	status.QPS = float64(totalQuery) / 60
 	if totalQuery > 0 {
 		status.AvgLatency = float64(totalLatency.Nanoseconds()) / float64(totalQuery) / 1000000
 	}

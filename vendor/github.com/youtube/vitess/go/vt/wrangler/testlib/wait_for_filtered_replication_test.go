@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package testlib
 
@@ -11,17 +23,17 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/vttablet/grpcqueryservice"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletmanager"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vttablet/grpcqueryservice"
+	"vitess.io/vitess/go/vt/vttablet/tabletmanager"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	querypb "vitess.io/vitess/go/vt/proto/query"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 const keyspace = "ks"
@@ -95,6 +107,12 @@ func waitForFilteredReplication(t *testing.T, expectedErr string, initialStats *
 	// dest is the master of the dest shard which receives filtered replication events.
 	dest := NewFakeTablet(t, wr, "cell1", 1, topodatapb.TabletType_MASTER, nil,
 		TabletKeyspaceShard(t, keyspace, destShard))
+
+	// Use real, but trimmed down QueryService.
+	qs := tabletserver.NewTabletServerWithNilTopoServer(tabletenv.DefaultQsConfig)
+	grpcqueryservice.Register(dest.RPCServer, qs)
+
+	// And start the action loop, after having registered the extra service.
 	dest.StartActionLoop(t, wr)
 	defer dest.StopActionLoop(t)
 
@@ -109,10 +127,6 @@ func waitForFilteredReplication(t *testing.T, expectedErr string, initialStats *
 	// observe otherwise because we call TabletServer.BroadcastHealth() directly and
 	// skip going through the tabletmanager's agent.
 	dest.Agent.BinlogPlayerMap = tabletmanager.NewBinlogPlayerMap(ts, nil, nil)
-
-	// Use real, but trimmed down QueryService.
-	qs := tabletserver.NewTabletServerWithNilTopoServer(tabletenv.DefaultQsConfig)
-	grpcqueryservice.Register(dest.RPCServer, qs)
 
 	qs.BroadcastHealth(42, initialStats)
 

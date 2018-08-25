@@ -1,3 +1,19 @@
+/*
+ * Copyright 2017 Google Inc.
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package io.vitess.client;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -8,6 +24,13 @@ import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import java.sql.SQLDataException;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import javax.annotation.Nullable;
+
 import io.vitess.client.cursor.Cursor;
 import io.vitess.client.cursor.CursorWithError;
 import io.vitess.client.cursor.SimpleCursor;
@@ -36,12 +59,6 @@ import io.vitess.proto.Vtgate.ExecuteShardsResponse;
 import io.vitess.proto.Vtgate.RollbackRequest;
 import io.vitess.proto.Vtgate.RollbackResponse;
 import io.vitess.proto.Vtgate.Session;
-import java.sql.SQLDataException;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import javax.annotation.Nullable;
 
 /**
  * An asynchronous VTGate transaction session.
@@ -63,6 +80,7 @@ import javax.annotation.Nullable;
  * <p>If you prefer a synchronous API, you can use {@link VTGateBlockingConn#begin(Context)}, which
  * returns a {@link VTGateBlockingTx} instead.
  */
+@Deprecated
 public class VTGateTx {
   private final RpcClient client;
   private final String keyspace;

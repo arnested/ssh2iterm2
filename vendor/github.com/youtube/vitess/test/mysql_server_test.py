@@ -1,8 +1,18 @@
 #!/usr/bin/env python
 #
-# Copyright 2013, Google Inc. All rights reserved.
-# Use of this source code is governed by a BSD-style license that can
-# be found in the LICENSE file.
+# Copyright 2017 Google Inc.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Ensures the vtgate MySQL server protocol plugin works as expected.
 
@@ -11,6 +21,7 @@ set properly.
 """
 
 
+import socket
 import unittest
 
 import MySQLdb
@@ -79,6 +90,7 @@ create_vt_insert_test = '''create table vt_insert_test (
 id bigint auto_increment,
 msg varchar(64),
 keyspace_id bigint(20) unsigned NOT NULL,
+data longblob,
 primary key (id)
 ) Engine=InnoDB'''
 
@@ -92,7 +104,7 @@ class TestMySQL(unittest.TestCase):
       fd.write("""{
       "table_groups": [
           {
-             "table_names_or_prefixes": ["vt_insert_test"],
+             "table_names_or_prefixes": ["vt_insert_test", "dual"],
              "readers": ["vtgate client 1"],
              "writers": ["vtgate client 1"],
              "admins": ["vtgate client 1"]
@@ -131,8 +143,11 @@ class TestMySQL(unittest.TestCase):
     # start vtgate
     utils.VtGate(mysql_server=True).start(
         extra_args=['-mysql_auth_server_impl', 'static',
+                    '-mysql_server_query_timeout', '1s',
                     '-mysql_auth_server_static_file', mysql_auth_server_static])
-    params = dict(host='::',
+    # We use gethostbyname('localhost') so we don't presume
+    # of the IP format (travis is only IP v4, really).
+    params = dict(host=socket.gethostbyname('localhost'),
                   port=utils.vtgate.mysql_port,
                   user='testuser1',
                   passwd='testpassword1',
@@ -142,6 +157,49 @@ class TestMySQL(unittest.TestCase):
     conn = MySQLdb.Connect(**params)
     cursor = conn.cursor()
     cursor.execute('select * from vt_insert_test', {})
+    cursor.close()
+
+    # verify that queries work end-to-end with large grpc messages
+    largeComment = 'L' * ((4 * 1024 * 1024) + 1)
+    cursor = conn.cursor()
+    cursor.execute('insert into vt_insert_test (id, msg, keyspace_id, data) values(%s, %s, %s, %s) /* %s */',
+        (1, 'large blob', 123, 'LLL', largeComment))
+    cursor.close()
+
+    cursor = conn.cursor()
+    cursor.execute('select * from vt_insert_test where id = 1');
+    if cursor.rowcount != 1:
+        self.fail('expected 1 row got ' + str(cursor.rowcount))
+
+    for (id, msg, keyspace_id, blob) in cursor:
+        if blob != 'LLL':
+            self.fail('blob did not match \'LLL\'')
+
+    cursor.close()
+
+    hugeBlob = 'L' * (environment.grpc_max_message_size + 1)
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute('insert into vt_insert_test (id, msg, keyspace_id, data) values(%s, %s, %s, %s)',
+            (2, 'huge blob', 123, hugeBlob))
+        self.fail('Execute went through')
+    except MySQLdb.OperationalError, e:
+      s = str(e)
+      self.assertIn('trying to send message larger than max', s)
+
+    conn.close()
+
+    # 'vtgate client' this query should timeout
+    conn = MySQLdb.Connect(**params)
+    try:
+      cursor = conn.cursor()
+      cursor.execute('SELECT SLEEP(5)', {})
+      self.fail('Execute went through')
+    except MySQLdb.OperationalError, e:
+      s = str(e)
+      # 1317 is DeadlineExceeded error code
+      self.assertIn('1317', s)
     conn.close()
 
     # 'vtgate client 2' is not authorized to access vt_insert_test
@@ -157,7 +215,6 @@ class TestMySQL(unittest.TestCase):
       self.assertIn('table acl error', s)
       self.assertIn('cannot run PASS_SELECT on table', s)
     conn.close()
-
 
 if __name__ == '__main__':
   utils.main()

@@ -17,14 +17,14 @@ To run Vitess in Docker, you can either use our pre-built images on [Docker Hub]
 * The [vitess/lite](https://hub.docker.com/r/vitess/lite/) image contains only
   the compiled Vitess binaries, excluding ZooKeeper. It can run Vitess, but
   lacks the environment needed to build Vitess or run tests. It's primarily used
-  for the [Vitess on Kubernetes](http://vitess.io/getting-started/) guide.
+  for the [Vitess on Kubernetes]({% link getting-started/index.md %}) guide.
 
 For example, you can directly run `vitess/base`, and Docker will download the
 image for you:
 
 ``` sh
 $ sudo docker run -ti vitess/base bash
-vitess@32f187ef9351:/vt/src/github.com/youtube/vitess$ make build
+vitess@32f187ef9351:/vt/src/vitess.io/vitess$ make build
 ```
 
 Now you can proceed to [start a Vitess cluster](#start-a-vitess-cluster) inside
@@ -45,9 +45,9 @@ $ docker inspect 32f187ef9351 | grep IPAddress
 
 You can also build Vitess Docker images yourself to include your
 own patches or configuration data. The
-[Dockerfile](https://github.com/youtube/vitess/blob/master/Dockerfile)
+[Dockerfile](https://github.com/vitessio/vitess/blob/master/Dockerfile)
 in the root of the Vitess tree builds the `vitess/base` image.
-The [docker](https://github.com/youtube/vitess/tree/master/docker)
+The [docker](https://github.com/vitessio/vitess/tree/master/docker)
 subdirectory contains scripts for building other images, such as `vitess/lite`.
 
 Our `Makefile` also contains rules to build the images. For example:
@@ -73,7 +73,7 @@ OS X 10.11 (El Capitan) should work as well, the installation instructions are b
 
 In addition, Vitess requires the software and libraries listed below.
 
-1.  [Install Go 1.8+](http://golang.org/doc/install).
+1.  [Install Go 1.9+](http://golang.org/doc/install).
 
 2.  Install [MariaDB 10.0](https://downloads.mariadb.org/) or
     [MySQL 5.6](http://dev.mysql.com/downloads/mysql). You can use any
@@ -93,20 +93,39 @@ In addition, Vitess requires the software and libraries listed below.
     error like `Could not find my-default.cnf`. If you run into this, just add
     it with the following contents:
 
-    ```ini
-[mysqld]
-sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
-```
+    ```
+	[mysqld]
+	sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
+    ```
 
-3.  Select a lock service from the options listed below. It is technically
+3.  Uninstall or disable `AppArmor`. Some versions of MySQL come with default
+    AppArmor configurations that the Vitess tools don't recognize yet. This causes
+    various permission failures when Vitess initializes MySQL instances through
+    the `mysqlctl` tool. This is only an issue for a test environment. If AppArmor
+    is necessary in production, you can configure the MySQL instances appropriately
+    without going through mysqlctl.
+
+    ``` sh
+    $ sudo service apparmor stop
+    $ sudo service apparmor teardown
+    $ sudo update-rc.d -f apparmor remove
+    ```
+
+    Reboot, just to be sure that `AppArmor` is fully disabled.
+
+
+4.  Select a lock service from the options listed below. It is technically
     possible to use another lock server, but plugins currently exist only
-    for ZooKeeper and etcd.
-    - ZooKeeper 3.3.5 is included by default. 
+    for ZooKeeper, etcd and consul.
+    - ZooKeeper 3.4.10 is included by default. 
     - [Install etcd v3.0+](https://github.com/coreos/etcd/releases).
       If you use etcd, remember to include the `etcd` command
       on your path.
+    - [Install Consul](https://www.consul.io/).
+      If you use consul, remember to include the `consul` command
+      on your path.
 
-4.  Install the following other tools needed to build and run Vitess:
+5.  Install the following other tools needed to build and run Vitess:
     - make
     - automake
     - libtool
@@ -115,7 +134,6 @@ sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
     - python-mysqldb
     - libssl-dev
     - g++
-    - mercurial
     - git
     - pkg-config
     - bison
@@ -125,10 +143,10 @@ sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
     These can be installed with the following apt-get command:
 
     ``` sh
-    $ sudo apt-get install make automake libtool python-dev python-virtualenv python-mysqldb libssl-dev g++ mercurial git pkg-config bison curl unzip
+    $ sudo apt-get install make automake libtool python-dev python-virtualenv python-mysqldb libssl-dev g++ git pkg-config bison curl unzip
     ```
 
-5.  If you decided to use ZooKeeper in step 3, you also need to install a
+6.  If you decided to use ZooKeeper in step 3, you also need to install a
     Java Runtime, such as OpenJDK.
 
     ``` sh
@@ -161,7 +179,7 @@ sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
 5.  Run the following commands:
 
     ``` sh
-    brew install go automake libtool python mercurial git bison curl wget homebrew/versions/mysql56
+    brew install go automake libtool python git bison curl wget homebrew/versions/mysql56
     pip install --upgrade pip setuptools
     pip install virtualenv
     pip install MySQL-python
@@ -214,13 +232,13 @@ sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
 
 1.  Navigate to the directory where you want to download the Vitess
     source code and clone the Vitess Github repo. After doing so,
-    navigate to the `src/github.com/youtube/vitess` directory.
+    navigate to the `src/vitess.io/vitess` directory.
 
     ``` sh
     cd $WORKSPACE
-    git clone https://github.com/youtube/vitess.git \
-        src/github.com/youtube/vitess
-    cd src/github.com/youtube/vitess
+    git clone https://github.com/vitessio/vitess.git \
+        src/vitess.io/vitess
+    cd src/vitess.io/vitess
     ```
 
 1.  Set the `MYSQL_FLAVOR` environment variable. Choose the appropriate
@@ -247,7 +265,7 @@ sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
     Note that the command indicates that the `mysql` executable should
     be found at `/usr/local/mysql/bin/mysql`.
 
-1.  Run `mysql_config --version` and confirm that you
+1.  Run `mysqld --version` and confirm that you
     are running the correct version of MariaDB or MySQL. The value should
     be 10 or higher for MariaDB and 5.6.x for MySQL.
 
@@ -281,14 +299,26 @@ sql_mode=NO_ENGINE_SUBSTITUTION,STRICT_TRANS_TABLES
 **Note:** If you are using etcd, set the following environment variable:
 
 ``` sh
-export VT_TEST_FLAGS='--topo-server-flavor=etcd'
+export VT_TEST_FLAGS='--topo-server-flavor=etcd2'
 ```
 
-The default targets when running `make` or `make test` contain a full set of
+**Note:** If you are using consul, set the following environment variable:
+
+``` sh
+export VT_TEST_FLAGS='--topo-server-flavor=consul
+```
+
+The default targets when running `make test` contain a full set of
 tests intended to help Vitess developers to verify code changes. Those tests
 simulate a small Vitess cluster by launching many servers on the local
 machine. To do so, they require a lot of resources; a minimum of 8GB RAM
 and SSD is recommended to run the tests.
+
+Some tests require extra packages. For example, on Ubuntu:
+
+``` sh
+$ sudo apt-get install chromium-browser mvn xvfb
+```
 
 If you want only to check that Vitess is working in your environment,
 you can run a lighter set of tests:
@@ -299,7 +329,7 @@ make site_test
 
 #### Common Test Issues
 
-Attempts to run the full developer test suite (`make` or `make test`)
+Attempts to run the full developer test suite (`make test`)
 on an underpowered machine often results in failure. If you still see
 the same failures when running the lighter set of tests (`make site_test`),
 please let the development team know in the
@@ -321,7 +351,7 @@ pkill -f '(vtdataroot|VTDATAROOT)' # kill Vitess processes
 
 This error often means your disk is too slow. If you don't have access
 to an SSD, you can try [testing against a
-ramdisk](https://github.com/youtube/vitess/blob/master/doc/TestingOnARamDisk.md).
+ramdisk](https://github.com/vitessio/vitess/blob/master/doc/TestingOnARamDisk.md).
 
 ##### Connection refused to tablet, MySQL socket not found, etc.
 
@@ -367,7 +397,7 @@ lock service. ZooKeeper is included in the Vitess distribution.
     variables required before running the scripts are `VTROOT` and `VTDATAROOT`.
 
     Set `VTROOT` to the parent of the Vitess source tree. For example, if you
-    ran `make build` while in `$HOME/vt/src/github.com/youtube/vitess`,
+    ran `make build` while in `$HOME/vt/src/vitess.io/vitess`,
     then you should set:
 
     ``` sh
@@ -381,14 +411,14 @@ lock service. ZooKeeper is included in the Vitess distribution.
     export VTDATAROOT=$HOME/vtdataroot
     ```
 
-1.  **Start ZooKeeper**
+1.  **Start ZooKeeper or Etcd**
 
     Servers in a Vitess cluster find each other by looking for
     dynamic configuration data stored in a distributed lock
     service. The following script creates a small ZooKeeper cluster:
 
     ``` sh
-    $ cd $VTROOT/src/github.com/youtube/vitess/examples/local
+    $ cd $VTROOT/src/vitess.io/vitess/examples/local
     vitess/examples/local$ ./zk-up.sh
     ### example output:
     # Starting zk servers...
@@ -403,6 +433,20 @@ lock service. ZooKeeper is included in the Vitess distribution.
     variable to point to the global ZooKeeper instance. The global instance in
     turn is configured to point to the local instance. In our sample scripts,
     they are both hosted in the same ZooKeeper service.
+
+    If you want to use Etcd as a distributed lock service, The following script 
+    creates a Etcd instance:
+
+    ``` sh
+    $ cd $VTROOT/src/vitess.io/vitess/examples/local
+    vitess/examples/local$ source ./topo-etcd2.sh
+    vitess/examples/local$ ./etcd-up.sh
+    ### example output:
+    # enter etcd2 env
+    # etcdmain: etcd Version: 3.X.X
+    # ... 
+    # etcd start done...
+    ```
 
 1.  **Start vtctld**
 
@@ -438,8 +482,8 @@ lock service. ZooKeeper is included in the Vitess distribution.
 1.  **Start vttablets**
 
     The `vttablet-up.sh` script brings up three vttablets, and assigns them to
-    a [keyspace](http://vitess.io/overview/concepts.html#keyspace) and [shard]
-    (http://vitess.io/overview/concepts.html#shard) according to the variables
+    a [keyspace]({% link overview/concepts.md %}#keyspace) and [shard]
+    ({% link overview/concepts.md %}#shard) according to the variables
     set at the top of the script file.
 
     ``` sh
@@ -461,7 +505,7 @@ lock service. ZooKeeper is included in the Vitess distribution.
     This is what an unsharded keyspace looks like.
 
     If you click on the shard box, you'll see a list of [tablets]
-    (http://vitess.io/overview/concepts.html#tablet) in that shard.
+    ({% link overview/concepts.md %}#tablet) in that shard.
     Note that it's normal for the tablets to be unhealthy at this point, since
     you haven't initialized them yet.
 
@@ -492,17 +536,19 @@ lock service. ZooKeeper is included in the Vitess distribution.
 
     After running this command, go back to the **Shard Status** page
     in the *vtctld* web interface. When you refresh the
-    page, you should see that one *vttablet* is the master
-    and the other two are replicas.
+    page, you should see that one *vttablet* is the master,
+    two are replicas and two are rdonly.
 
     You can also see this on the command line:
 
     ``` sh
     vitess/examples/local$ ./lvtctl.sh ListAllTablets test
     ### example output:
-    # test-0000000100 test_keyspace 0 master localhost:15100 localhost:33100 []
-    # test-0000000101 test_keyspace 0 replica localhost:15101 localhost:33101 []
-    # test-0000000102 test_keyspace 0 replica localhost:15102 localhost:33102 []
+    # test-0000000100 test_keyspace 0 master localhost:15100 localhost:17100 []
+    # test-0000000101 test_keyspace 0 replica localhost:15101 localhost:17101 []
+    # test-0000000102 test_keyspace 0 replica localhost:15102 localhost:17102 []
+    # test-0000000103 test_keyspace 0 rdonly localhost:15103 localhost:17103 []
+    # test-0000000104 test_keyspace 0 rdonly localhost:15104 localhost:17104 []
     ```
 
 1.  **Create a table**
@@ -530,7 +576,7 @@ lock service. ZooKeeper is included in the Vitess distribution.
 1.  **Take a backup**
 
     Now that the initial schema is applied, it's a good time to take the first
-    [backup](http://vitess.io/user-guide/backup-and-restore.html). This backup
+    [backup]({% link user-guide/backup-and-restore.md %}). This backup
     will be used to automatically restore any additional replicas that you run,
     before they connect themselves to the master and catch up on replication.
     If an existing tablet goes down and comes back up without its data, it will
@@ -608,10 +654,10 @@ See the comments at the top of each sample file for usage instructions.
 ### Try Vitess resharding
 
 Now that you have a full Vitess stack running, you may want to go on to the
-[Horizontal Sharding workflow guide](http://vitess.io/user-guide/horizontal-sharding-workflow.html)
-or [Horizontal Sharding codelab](http://vitess.io/user-guide/horizontal-sharding.html)
+[Horizontal Sharding workflow guide]({% link user-guide/horizontal-sharding-workflow.md %})
+or [Horizontal Sharding codelab]({% link user-guide/horizontal-sharding.md %})
 (if you prefer to run each step manually through commands) to try out
-[dynamic resharding](http://vitess.io/user-guide/sharding.html#resharding).
+[dynamic resharding]({% link user-guide/sharding.md %}#resharding).
 
 If so, you can skip the tear-down since the sharding guide picks up right here.
 If not, continue to the clean-up steps below.
@@ -624,7 +670,7 @@ Each `-up.sh` script has a corresponding `-down.sh` script to stop the servers.
 vitess/examples/local$ ./vtgate-down.sh
 vitess/examples/local$ ./vttablet-down.sh
 vitess/examples/local$ ./vtctld-down.sh
-vitess/examples/local$ ./zk-down.sh
+vitess/examples/local$ ./zk-down.sh  # If you use Etcd, run ./etcd-down.sh
 ```
 
 Note that the `-down.sh` scripts will leave behind any data files created.

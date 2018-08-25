@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package testlib
 
@@ -12,18 +24,18 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/event"
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/memorytopo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/topotools"
-	"github.com/youtube/vitess/go/vt/topotools/events"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletmanager"
-	"github.com/youtube/vitess/go/vt/vttablet/tmclient"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/event"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools"
+	"vitess.io/vitess/go/vt/topotools/events"
+	"vitess.io/vitess/go/vt/vttablet/tabletmanager"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 func TestTabletExternallyReparented(t *testing.T) {
@@ -60,33 +72,33 @@ func TestTabletExternallyReparented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTabletMapForShardByCell should have worked but got: %v", err)
 	}
-	master, err := topotools.FindTabletByIPAddrAndPort(tabletMap, oldMaster.Tablet.Ip, "vt", oldMaster.Tablet.PortMap["vt"])
-	if err != nil || !topoproto.TabletAliasEqual(&master, oldMaster.Tablet.Alias) {
-		t.Fatalf("FindTabletByIPAddrAndPort(master) failed: %v %v", err, master)
+	master, err := topotools.FindTabletByHostAndPort(tabletMap, oldMaster.Tablet.Hostname, "vt", oldMaster.Tablet.PortMap["vt"])
+	if err != nil || !topoproto.TabletAliasEqual(master, oldMaster.Tablet.Alias) {
+		t.Fatalf("FindTabletByHostAndPort(master) failed: %v %v", err, master)
 	}
-	slave1, err := topotools.FindTabletByIPAddrAndPort(tabletMap, goodSlave1.Tablet.Ip, "vt", goodSlave1.Tablet.PortMap["vt"])
-	if err != nil || !topoproto.TabletAliasEqual(&slave1, goodSlave1.Tablet.Alias) {
-		t.Fatalf("FindTabletByIPAddrAndPort(slave1) failed: %v %v", err, master)
+	slave1, err := topotools.FindTabletByHostAndPort(tabletMap, goodSlave1.Tablet.Hostname, "vt", goodSlave1.Tablet.PortMap["vt"])
+	if err != nil || !topoproto.TabletAliasEqual(slave1, goodSlave1.Tablet.Alias) {
+		t.Fatalf("FindTabletByHostAndPort(slave1) failed: %v %v", err, master)
 	}
-	slave2, err := topotools.FindTabletByIPAddrAndPort(tabletMap, goodSlave2.Tablet.Ip, "vt", goodSlave2.Tablet.PortMap["vt"])
+	slave2, err := topotools.FindTabletByHostAndPort(tabletMap, goodSlave2.Tablet.Hostname, "vt", goodSlave2.Tablet.PortMap["vt"])
 	if err != topo.ErrNoNode {
-		t.Fatalf("FindTabletByIPAddrAndPort(slave2) worked: %v %v", err, slave2)
+		t.Fatalf("FindTabletByHostAndPort(slave2) worked: %v %v", err, slave2)
 	}
 
 	// Make sure the master is not exported in other cells
 	tabletMap, err = ts.GetTabletMapForShardByCell(ctx, "test_keyspace", "0", []string{"cell2"})
-	master, err = topotools.FindTabletByIPAddrAndPort(tabletMap, oldMaster.Tablet.Ip, "vt", oldMaster.Tablet.PortMap["vt"])
+	master, err = topotools.FindTabletByHostAndPort(tabletMap, oldMaster.Tablet.Hostname, "vt", oldMaster.Tablet.PortMap["vt"])
 	if err != topo.ErrNoNode {
-		t.Fatalf("FindTabletByIPAddrAndPort(master) worked in cell2: %v %v", err, master)
+		t.Fatalf("FindTabletByHostAndPort(master) worked in cell2: %v %v", err, master)
 	}
 
 	tabletMap, err = ts.GetTabletMapForShard(ctx, "test_keyspace", "0")
 	if err != topo.ErrPartialResult {
 		t.Fatalf("GetTabletMapForShard should have returned ErrPartialResult but got: %v", err)
 	}
-	master, err = topotools.FindTabletByIPAddrAndPort(tabletMap, oldMaster.Tablet.Ip, "vt", oldMaster.Tablet.PortMap["vt"])
-	if err != nil || !topoproto.TabletAliasEqual(&master, oldMaster.Tablet.Alias) {
-		t.Fatalf("FindTabletByIPAddrAndPort(master) failed: %v %v", err, master)
+	master, err = topotools.FindTabletByHostAndPort(tabletMap, oldMaster.Tablet.Hostname, "vt", oldMaster.Tablet.PortMap["vt"])
+	if err != nil || !topoproto.TabletAliasEqual(master, oldMaster.Tablet.Alias) {
+		t.Fatalf("FindTabletByHostAndPort(master) failed: %v %v", err, master)
 	}
 
 	// On the elected master, we will respond to
@@ -126,8 +138,8 @@ func TestTabletExternallyReparented(t *testing.T) {
 	// Second test: reparent to a replica, and pretend the old
 	// master is still good to go.
 
-	// This tests a bad case; the new designated master is a slave,
-	// but we should do what we're told anyway
+	// This tests a bad case: the new designated master is a slave,
+	// but we should do what we're told anyway.
 	ti, err = ts.GetTablet(ctx, goodSlave1.Tablet.Alias)
 	if err != nil {
 		t.Fatalf("GetTablet failed: %v", err)
@@ -136,7 +148,7 @@ func TestTabletExternallyReparented(t *testing.T) {
 	if err := tmc.TabletExternallyReparented(context.Background(), ti.Tablet, waitID); err != nil {
 		t.Fatalf("TabletExternallyReparented(slave) error: %v", err)
 	}
-	waitForExternalReparent(t, waitID)
+	waitForExternalReparent(t, "TestTabletExternallyReparented: slave designated as master", waitID)
 
 	// This tests the good case, where everything works as planned
 	t.Logf("TabletExternallyReparented(new master) expecting success")
@@ -148,7 +160,7 @@ func TestTabletExternallyReparented(t *testing.T) {
 	if err := tmc.TabletExternallyReparented(context.Background(), ti.Tablet, waitID); err != nil {
 		t.Fatalf("TabletExternallyReparented(replica) failed: %v", err)
 	}
-	waitForExternalReparent(t, waitID)
+	waitForExternalReparent(t, "TestTabletExternallyReparented: good case", waitID)
 }
 
 // TestTabletExternallyReparentedWithDifferentMysqlPort makes sure
@@ -197,7 +209,7 @@ func TestTabletExternallyReparentedWithDifferentMysqlPort(t *testing.T) {
 	if err := tmc.TabletExternallyReparented(context.Background(), ti.Tablet, waitID); err != nil {
 		t.Fatalf("TabletExternallyReparented(replica) failed: %v", err)
 	}
-	waitForExternalReparent(t, waitID)
+	waitForExternalReparent(t, "TestTabletExternallyReparentedWithDifferentMysqlPort: good case", waitID)
 }
 
 // TestTabletExternallyReparentedContinueOnUnexpectedMaster makes sure
@@ -241,11 +253,14 @@ func TestTabletExternallyReparentedContinueOnUnexpectedMaster(t *testing.T) {
 	if err := tmc.TabletExternallyReparented(context.Background(), ti.Tablet, waitID); err != nil {
 		t.Fatalf("TabletExternallyReparented(replica) failed: %v", err)
 	}
-	waitForExternalReparent(t, waitID)
+	waitForExternalReparent(t, "TestTabletExternallyReparentedContinueOnUnexpectedMaster: good case", waitID)
 }
 
 func TestTabletExternallyReparentedFailedOldMaster(t *testing.T) {
-	tabletmanager.SetReparentFlags(time.Minute /* finalizeTimeout */)
+	// The 'RefreshState' clal on the old master will timeout on
+	// this value, so it has to be smaller than the 10s of the
+	// wait for the 'finished' state of waitForExternalReparent.
+	tabletmanager.SetReparentFlags(2 * time.Second /* finalizeTimeout */)
 
 	ctx := context.Background()
 	ts := memorytopo.NewServer("cell1", "cell2")
@@ -259,13 +274,12 @@ func TestTabletExternallyReparentedFailedOldMaster(t *testing.T) {
 	// Reparent to a replica, and pretend the old master is not responding.
 
 	// On the elected master, we will respond to
-	// TabletActionSlaveWasPromoted
+	// TabletActionSlaveWasPromoted.
 	newMaster.StartActionLoop(t, wr)
 	defer newMaster.StopActionLoop(t)
 
-	// On the old master, we will only get a
-	// TabletActionSlaveWasRestarted call, let's just not
-	// respond to it at all
+	// On the old master, we will only get a RefreshState call,
+	// let's just not respond to it at all, and let it timeout.
 
 	// On the good slave, we will respond to
 	// TabletActionSlaveWasRestarted.
@@ -273,7 +287,6 @@ func TestTabletExternallyReparentedFailedOldMaster(t *testing.T) {
 	defer goodSlave.StopActionLoop(t)
 
 	// The reparent should work as expected here
-	t.Logf("TabletExternallyReparented(new master) expecting success")
 	tmc := tmclient.NewTabletManagerClient()
 	ti, err := ts.GetTablet(ctx, newMaster.Tablet.Alias)
 	if err != nil {
@@ -283,7 +296,7 @@ func TestTabletExternallyReparentedFailedOldMaster(t *testing.T) {
 	if err := tmc.TabletExternallyReparented(context.Background(), ti.Tablet, waitID); err != nil {
 		t.Fatalf("TabletExternallyReparented(replica) failed: %v", err)
 	}
-	waitForExternalReparent(t, waitID)
+	waitForExternalReparent(t, "TestTabletExternallyReparentedFailedOldMaster: good case", waitID)
 
 	// check the old master was converted to replica
 	tablet, err := ts.GetTablet(ctx, oldMaster.Tablet.Alias)
@@ -330,7 +343,7 @@ func init() {
 // new master is visible in the serving graph. Before checking things like
 // replica endpoints and old master status, we should wait for the finalize
 // stage, which happens in the background.
-func waitForExternalReparent(t *testing.T, externalID string) {
+func waitForExternalReparent(t *testing.T, name, externalID string) {
 	timer := time.NewTimer(10 * time.Second)
 	defer timer.Stop()
 
@@ -342,6 +355,6 @@ func waitForExternalReparent(t *testing.T, externalID string) {
 	case <-c:
 		return
 	case <-timer.C:
-		t.Fatalf("deadline exceeded waiting for finalized external reparent %q", externalID)
+		t.Fatalf("deadline exceeded waiting for finalized external reparent %q for test %v", externalID, name)
 	}
 }

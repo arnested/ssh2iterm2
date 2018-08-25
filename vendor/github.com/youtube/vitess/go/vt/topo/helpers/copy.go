@@ -1,6 +1,18 @@
-// Copyright 2013, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package helpers contains a few utility classes to handle topo.Server
 // objects, and transitions from one topo implementation to another.
@@ -10,16 +22,16 @@ import (
 	"fmt"
 	"sync"
 
-	log "github.com/golang/glog"
-	"github.com/youtube/vitess/go/vt/concurrency"
-	"github.com/youtube/vitess/go/vt/topo"
 	"golang.org/x/net/context"
+	"vitess.io/vitess/go/vt/concurrency"
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/topo"
 
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // CopyKeyspaces will create the keyspaces in the destination topo.
-func CopyKeyspaces(ctx context.Context, fromTS, toTS topo.Impl) {
+func CopyKeyspaces(ctx context.Context, fromTS, toTS *topo.Server) {
 	keyspaces, err := fromTS.GetKeyspaces(ctx)
 	if err != nil {
 		log.Fatalf("GetKeyspaces: %v", err)
@@ -32,13 +44,13 @@ func CopyKeyspaces(ctx context.Context, fromTS, toTS topo.Impl) {
 		go func(keyspace string) {
 			defer wg.Done()
 
-			k, _, err := fromTS.GetKeyspace(ctx, keyspace)
+			ki, err := fromTS.GetKeyspace(ctx, keyspace)
 			if err != nil {
 				rec.RecordError(fmt.Errorf("GetKeyspace(%v): %v", keyspace, err))
 				return
 			}
 
-			if err := toTS.CreateKeyspace(ctx, keyspace, k); err != nil {
+			if err := toTS.CreateKeyspace(ctx, keyspace, ki.Keyspace); err != nil {
 				if err == topo.ErrNodeExists {
 					log.Warningf("keyspace %v already exists", keyspace)
 				} else {
@@ -67,7 +79,7 @@ func CopyKeyspaces(ctx context.Context, fromTS, toTS topo.Impl) {
 }
 
 // CopyShards will create the shards in the destination topo.
-func CopyShards(ctx context.Context, fromTS, toTS topo.Impl) {
+func CopyShards(ctx context.Context, fromTS, toTS *topo.Server) {
 	keyspaces, err := fromTS.GetKeyspaces(ctx)
 	if err != nil {
 		log.Fatalf("fromTS.GetKeyspaces: %v", err)
@@ -90,19 +102,26 @@ func CopyShards(ctx context.Context, fromTS, toTS topo.Impl) {
 				go func(keyspace, shard string) {
 					defer wg.Done()
 
-					s, _, err := fromTS.GetShard(ctx, keyspace, shard)
+					si, err := fromTS.GetShard(ctx, keyspace, shard)
 					if err != nil {
 						rec.RecordError(fmt.Errorf("GetShard(%v, %v): %v", keyspace, shard, err))
 						return
 					}
 
-					if err := toTS.CreateShard(ctx, keyspace, shard, s); err != nil {
+					if err := toTS.CreateShard(ctx, keyspace, shard); err != nil {
 						if err == topo.ErrNodeExists {
 							log.Warningf("shard %v/%v already exists", keyspace, shard)
 						} else {
 							rec.RecordError(fmt.Errorf("CreateShard(%v, %v): %v", keyspace, shard, err))
 							return
 						}
+					}
+					if _, err := toTS.UpdateShardFields(ctx, keyspace, shard, func(toSI *topo.ShardInfo) error {
+						*toSI.Shard = *si.Shard
+						return nil
+					}); err != nil {
+						rec.RecordError(fmt.Errorf("UpdateShardFields(%v, %v): %v", keyspace, shard, err))
+						return
 					}
 				}(keyspace, shard)
 			}
@@ -115,13 +134,10 @@ func CopyShards(ctx context.Context, fromTS, toTS topo.Impl) {
 }
 
 // CopyTablets will create the tablets in the destination topo.
-func CopyTablets(ctx context.Context, fromTS, toTS topo.Impl) {
+func CopyTablets(ctx context.Context, fromTS, toTS *topo.Server) {
 	cells, err := fromTS.GetKnownCells(ctx)
 	if err != nil {
 		log.Fatalf("fromTS.GetKnownCells: %v", err)
-	}
-	tts := topo.Server{
-		Impl: toTS,
 	}
 
 	wg := sync.WaitGroup{}
@@ -140,19 +156,19 @@ func CopyTablets(ctx context.Context, fromTS, toTS topo.Impl) {
 						defer wg.Done()
 
 						// read the source tablet
-						tablet, _, err := fromTS.GetTablet(ctx, tabletAlias)
+						ti, err := fromTS.GetTablet(ctx, tabletAlias)
 						if err != nil {
 							rec.RecordError(fmt.Errorf("GetTablet(%v): %v", tabletAlias, err))
 							return
 						}
 
 						// try to create the destination
-						err = toTS.CreateTablet(ctx, tablet)
+						err = toTS.CreateTablet(ctx, ti.Tablet)
 						if err == topo.ErrNodeExists {
 							// update the destination tablet
 							log.Warningf("tablet %v already exists, updating it", tabletAlias)
-							_, err = tts.UpdateTabletFields(ctx, tablet.Alias, func(t *topodatapb.Tablet) error {
-								*t = *tablet
+							_, err = toTS.UpdateTabletFields(ctx, tabletAlias, func(t *topodatapb.Tablet) error {
+								*t = *ti.Tablet
 								return nil
 							})
 						}
@@ -173,13 +189,10 @@ func CopyTablets(ctx context.Context, fromTS, toTS topo.Impl) {
 
 // CopyShardReplications will create the ShardReplication objects in
 // the destination topo.
-func CopyShardReplications(ctx context.Context, fromTS, toTS topo.Impl) {
+func CopyShardReplications(ctx context.Context, fromTS, toTS *topo.Server) {
 	keyspaces, err := fromTS.GetKeyspaces(ctx)
 	if err != nil {
 		log.Fatalf("fromTS.GetKeyspaces: %v", err)
-	}
-	tts := topo.Server{
-		Impl: toTS,
 	}
 
 	wg := sync.WaitGroup{}
@@ -200,20 +213,20 @@ func CopyShardReplications(ctx context.Context, fromTS, toTS topo.Impl) {
 					defer wg.Done()
 
 					// read the source shard to get the cells
-					s, _, err := fromTS.GetShard(ctx, keyspace, shard)
+					si, err := fromTS.GetShard(ctx, keyspace, shard)
 					if err != nil {
 						rec.RecordError(fmt.Errorf("GetShard(%v, %v): %v", keyspace, shard, err))
 						return
 					}
 
-					for _, cell := range s.Cells {
+					for _, cell := range si.Shard.Cells {
 						sri, err := fromTS.GetShardReplication(ctx, cell, keyspace, shard)
 						if err != nil {
 							rec.RecordError(fmt.Errorf("GetShardReplication(%v, %v, %v): %v", cell, keyspace, shard, err))
 							continue
 						}
 
-						if err := tts.UpdateShardReplicationFields(ctx, cell, keyspace, shard, func(oldSR *topodatapb.ShardReplication) error {
+						if err := toTS.UpdateShardReplicationFields(ctx, cell, keyspace, shard, func(oldSR *topodatapb.ShardReplication) error {
 							*oldSR = *sri.ShardReplication
 							return nil
 						}); err != nil {

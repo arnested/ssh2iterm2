@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package status defines a few useful functions for our binaries,
 // mainly to link the status page with a vtctld instance.
@@ -13,7 +25,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/youtube/vitess/go/vt/servenv"
+	"vitess.io/vitess/go/vt/servenv"
 )
 
 var (
@@ -27,7 +39,7 @@ func MakeVtctldRedirect(text string, q map[string]string) template.HTML {
 	for k, v := range q {
 		query.Set(k, v)
 	}
-	url := "/explorers/redirect" + "?" + query.Encode()
+	url := "explorers/redirect" + "?" + query.Encode()
 	return VtctldLink(text, url)
 }
 
@@ -71,7 +83,7 @@ func VtctldShard(keyspace, shard string) template.HTML {
 // VtctldSrvCell returns the cell name, possibly linked to the
 // serving graph page in vtctld for that page.
 func VtctldSrvCell(cell string) template.HTML {
-	return VtctldLink(cell, "/serving_graph/"+cell)
+	return VtctldLink(cell, "serving_graph/"+cell)
 }
 
 // VtctldSrvKeyspace returns the keyspace name, possibly linked to the
@@ -108,12 +120,12 @@ func VtctldTablet(aliasName string) template.HTML {
 // StatusFuncs returns a FuncMap that contains all of our methods here.
 // It is exported so tests can use them.
 var StatusFuncs = template.FuncMap{
-	"github_com_youtube_vitess_vtctld_keyspace":     VtctldKeyspace,
-	"github_com_youtube_vitess_vtctld_shard":        VtctldShard,
-	"github_com_youtube_vitess_vtctld_srv_cell":     VtctldSrvCell,
-	"github_com_youtube_vitess_vtctld_srv_keyspace": VtctldSrvKeyspace,
-	"github_com_youtube_vitess_vtctld_replication":  VtctldReplication,
-	"github_com_youtube_vitess_vtctld_tablet":       VtctldTablet,
+	"github_com_vitessio_vitess_vtctld_keyspace":     VtctldKeyspace,
+	"github_com_vitessio_vitess_vtctld_shard":        VtctldShard,
+	"github_com_vitessio_vitess_vtctld_srv_cell":     VtctldSrvCell,
+	"github_com_vitessio_vitess_vtctld_srv_keyspace": VtctldSrvKeyspace,
+	"github_com_vitessio_vitess_vtctld_replication":  VtctldReplication,
+	"github_com_vitessio_vitess_vtctld_tablet":       VtctldTablet,
 }
 
 func init() {

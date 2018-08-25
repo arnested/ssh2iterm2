@@ -1,6 +1,18 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package connpool
 
@@ -8,14 +20,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/youtube/vitess/go/pools"
-	"github.com/youtube/vitess/go/sqldb"
-	"github.com/youtube/vitess/go/stats"
-	"github.com/youtube/vitess/go/vt/dbconnpool"
-	vtrpcpb "github.com/youtube/vitess/go/vt/proto/vtrpc"
-	"github.com/youtube/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"github.com/youtube/vitess/go/vt/vterrors"
 	"golang.org/x/net/context"
+
+	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/pools"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/vt/callerid"
+	"vitess.io/vitess/go/vt/dbconnpool"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
+
+	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
 // ErrConnPoolClosed is returned when the connection pool is closed.
@@ -28,7 +43,9 @@ var ErrConnPoolClosed = vterrors.New(vtrpcpb.Code_INTERNAL, "internal error: une
 // through non-test code.
 var usedNames = make(map[string]bool)
 
-type mysqlChecker interface {
+// MySQLChecker defines the CheckMySQL interface that lower
+// level objects can use to call back into TabletServer.
+type MySQLChecker interface {
 	CheckMySQL()
 }
 
@@ -39,12 +56,13 @@ type mysqlChecker interface {
 // Other than the connection type, ConnPool maintains an additional
 // pool of dba connections that are used to kill connections.
 type Pool struct {
-	mu          sync.Mutex
-	connections *pools.ResourcePool
-	capacity    int
-	idleTimeout time.Duration
-	dbaPool     *dbconnpool.ConnectionPool
-	checker     mysqlChecker
+	mu             sync.Mutex
+	connections    *pools.ResourcePool
+	capacity       int
+	idleTimeout    time.Duration
+	dbaPool        *dbconnpool.ConnectionPool
+	checker        MySQLChecker
+	appDebugParams *mysql.ConnParams
 }
 
 // New creates a new Pool. The name is used
@@ -53,7 +71,7 @@ func New(
 	name string,
 	capacity int,
 	idleTimeout time.Duration,
-	checker mysqlChecker) *Pool {
+	checker MySQLChecker) *Pool {
 	cp := &Pool{
 		capacity:    capacity,
 		idleTimeout: idleTimeout,
@@ -64,12 +82,15 @@ func New(
 		return cp
 	}
 	usedNames[name] = true
-	stats.Publish(name+"Capacity", stats.IntFunc(cp.Capacity))
-	stats.Publish(name+"Available", stats.IntFunc(cp.Available))
-	stats.Publish(name+"MaxCap", stats.IntFunc(cp.MaxCap))
-	stats.Publish(name+"WaitCount", stats.IntFunc(cp.WaitCount))
-	stats.Publish(name+"WaitTime", stats.DurationFunc(cp.WaitTime))
-	stats.Publish(name+"IdleTimeout", stats.DurationFunc(cp.IdleTimeout))
+	stats.NewGaugeFunc(name+"Capacity", "Tablet server conn pool capacity", cp.Capacity)
+	stats.NewGaugeFunc(name+"Available", "Tablet server conn pool available", cp.Available)
+	stats.NewGaugeFunc(name+"Active", "Tablet server conn pool active", cp.Active)
+	stats.NewGaugeFunc(name+"InUse", "Tablet server conn pool in use", cp.InUse)
+	stats.NewGaugeFunc(name+"MaxCap", "Tablet server conn pool max cap", cp.MaxCap)
+	stats.NewCounterFunc(name+"WaitCount", "Tablet server conn pool wait count", cp.WaitCount)
+	stats.NewCounterDurationFunc(name+"WaitTime", "Tablet server wait time", cp.WaitTime)
+	stats.NewGaugeDurationFunc(name+"IdleTimeout", "Tablet server idle timeout", cp.IdleTimeout)
+	stats.NewCounterFunc(name+"IdleClosed", "Tablet server conn pool idle closed", cp.IdleClosed)
 	return cp
 }
 
@@ -81,15 +102,17 @@ func (cp *Pool) pool() (p *pools.ResourcePool) {
 }
 
 // Open must be called before starting to use the pool.
-func (cp *Pool) Open(appParams, dbaParams *sqldb.ConnParams) {
+func (cp *Pool) Open(appParams, dbaParams, appDebugParams *mysql.ConnParams) {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
 
 	f := func() (pools.Resource, error) {
-		return NewDBConn(cp, appParams, dbaParams)
+		return NewDBConn(cp, appParams)
 	}
 	cp.connections = pools.NewResourcePool(f, cp.capacity, cp.capacity, cp.idleTimeout)
-	cp.dbaPool.Open(dbconnpool.DBConnectionCreator(dbaParams, tabletenv.MySQLStats))
+	cp.appDebugParams = appDebugParams
+
+	cp.dbaPool.Open(dbaParams, tabletenv.MySQLStats)
 }
 
 // Close will close the pool and wait for connections to be returned before
@@ -111,6 +134,9 @@ func (cp *Pool) Close() {
 // Get returns a connection.
 // You must call Recycle on DBConn once done.
 func (cp *Pool) Get(ctx context.Context) (*DBConn, error) {
+	if cp.isCallerIDAppDebug(ctx) {
+		return NewDBConnNoPool(cp.appDebugParams, cp.dbaPool)
+	}
 	p := cp.pool()
 	if p == nil {
 		return nil, ErrConnPoolClosed
@@ -187,6 +213,24 @@ func (cp *Pool) Available() int64 {
 	return p.Available()
 }
 
+// Active returns the number of active connections in the pool
+func (cp *Pool) Active() int64 {
+	p := cp.pool()
+	if p == nil {
+		return 0
+	}
+	return p.Active()
+}
+
+// InUse returns the number of in-use connections in the pool
+func (cp *Pool) InUse() int64 {
+	p := cp.pool()
+	if p == nil {
+		return 0
+	}
+	return p.InUse()
+}
+
 // MaxCap returns the maximum size of the pool
 func (cp *Pool) MaxCap() int64 {
 	p := cp.pool()
@@ -221,4 +265,21 @@ func (cp *Pool) IdleTimeout() time.Duration {
 		return 0
 	}
 	return p.IdleTimeout()
+}
+
+// IdleClosed returns the number of closed connections for the pool.
+func (cp *Pool) IdleClosed() int64 {
+	p := cp.pool()
+	if p == nil {
+		return 0
+	}
+	return p.IdleClosed()
+}
+
+func (cp *Pool) isCallerIDAppDebug(ctx context.Context) bool {
+	callerID := callerid.ImmediateCallerIDFromContext(ctx)
+	if cp.appDebugParams.Uname == "" {
+		return false
+	}
+	return callerID != nil && callerID.Username == cp.appDebugParams.Uname
 }

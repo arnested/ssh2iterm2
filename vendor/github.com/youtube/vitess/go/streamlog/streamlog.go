@@ -1,25 +1,62 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package streamlog provides a non-blocking message broadcaster.
 package streamlog
 
 import (
+	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
-	log "github.com/golang/glog"
-	"github.com/youtube/vitess/go/acl"
-	"github.com/youtube/vitess/go/stats"
+	"vitess.io/vitess/go/acl"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/vt/log"
 )
 
 var (
-	sendCount         = stats.NewCounters("StreamlogSend")
-	deliveredCount    = stats.NewMultiCounters("StreamlogDelivered", []string{"Log", "Subscriber"})
-	deliveryDropCount = stats.NewMultiCounters("StreamlogDeliveryDroppedMessages", []string{"Log", "Subscriber"})
+	// RedactDebugUIQueries controls whether full queries and bind variables are suppressed from debug UIs.
+	RedactDebugUIQueries = flag.Bool("redact-debug-ui-queries", false, "redact full queries and bind variables from debug UI")
+
+	// QueryLogFormat controls the format of the query log (either text or json)
+	QueryLogFormat = flag.String("querylog-format", "text", "format for query logs (\"text\" or \"json\")")
+
+	sendCount      = stats.NewCountersWithSingleLabel("StreamlogSend", "stream log send count", "logger_names")
+	deliveredCount = stats.NewCountersWithMultiLabels(
+		"StreamlogDelivered",
+		"Stream log delivered",
+		[]string{"Log", "Subscriber"})
+	deliveryDropCount = stats.NewCountersWithMultiLabels(
+		"StreamlogDeliveryDroppedMessages",
+		"Dropped messages by streamlog delivery",
+		[]string{"Log", "Subscriber"})
+)
+
+const (
+	// QueryLogFormatText is the format specifier for text querylog output
+	QueryLogFormatText = "text"
+
+	// QueryLogFormatJSON is the format specifier for json querylog output
+	QueryLogFormatJSON = "json"
 )
 
 // StreamLogger is a non-blocking broadcaster of messages.
@@ -108,4 +145,55 @@ func (logger *StreamLogger) ServeLogs(url string, messageFmt func(url.Values, in
 		}
 	})
 	log.Infof("Streaming logs from %s at %v.", logger.Name(), url)
+}
+
+// LogToFile starts logging to the specified file path and will reopen the
+// file in response to SIGUSR2.
+//
+// Returns the channel used for the subscription which can be used to close
+// it.
+func (logger *StreamLogger) LogToFile(path string, messageFmt func(url.Values, interface{}) string) (chan interface{}, error) {
+	rotateChan := make(chan os.Signal, 1)
+	signal.Notify(rotateChan, syscall.SIGUSR2)
+
+	logChan := logger.Subscribe("FileLog")
+	formatParams := map[string][]string{"full": {}}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		for {
+			select {
+			case record, _ := <-logChan:
+				formatted := messageFmt(formatParams, record)
+				f.WriteString(formatted)
+			case _, _ = <-rotateChan:
+				f.Close()
+				f, _ = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+			}
+		}
+	}()
+
+	return logChan, nil
+}
+
+// Formatter is a simple interface for objects that expose a Format function
+// as needed for streamlog.
+type Formatter interface {
+	Format(url.Values) string
+}
+
+// GetFormatter returns a formatter function for objects conforming to the
+// Formatter interface
+func GetFormatter(logger *StreamLogger) func(url.Values, interface{}) string {
+	return func(params url.Values, val interface{}) string {
+		fmter, ok := val.(Formatter)
+		if !ok {
+			return fmt.Sprintf("Error: unexpected value of type %T in %s!", val, logger.Name())
+		}
+		return fmter.Format(params)
+	}
 }

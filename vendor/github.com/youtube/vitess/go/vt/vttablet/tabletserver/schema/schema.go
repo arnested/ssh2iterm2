@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package schema
 
@@ -12,11 +24,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/youtube/vitess/go/sqltypes"
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/sqlparser"
 
-	querypb "github.com/youtube/vitess/go/vt/proto/query"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 // Table types
@@ -164,23 +176,23 @@ func (ta *Table) GetPKColumn(index int) *TableColumn {
 }
 
 // AddIndex adds an index to the table.
-func (ta *Table) AddIndex(name string) (index *Index) {
-	index = NewIndex(name)
+func (ta *Table) AddIndex(name string, unique bool) (index *Index) {
+	index = NewIndex(name, unique)
 	ta.Indexes = append(ta.Indexes, index)
 	return index
 }
 
 // SetMysqlStats receives the values found in the mysql information_schema.tables table
 func (ta *Table) SetMysqlStats(tr, dl, il, df, mdl sqltypes.Value) {
-	v, _ := tr.ParseInt64()
+	v, _ := sqltypes.ToInt64(tr)
 	ta.TableRows.Set(v)
-	v, _ = dl.ParseInt64()
+	v, _ = sqltypes.ToInt64(dl)
 	ta.DataLength.Set(v)
-	v, _ = il.ParseInt64()
+	v, _ = sqltypes.ToInt64(il)
 	ta.IndexLength.Set(v)
-	v, _ = df.ParseInt64()
+	v, _ = sqltypes.ToInt64(df)
 	ta.DataFree.Set(v)
-	v, _ = mdl.ParseInt64()
+	v, _ = sqltypes.ToInt64(mdl)
 	ta.MaxDataLength.Set(v)
 }
 
@@ -189,9 +201,21 @@ func (ta *Table) HasPrimary() bool {
 	return len(ta.Indexes) != 0 && ta.Indexes[0].Name.EqualString("primary")
 }
 
+// UniqueIndexes returns the number of unique indexes on the table
+func (ta *Table) UniqueIndexes() int {
+	unique := 0
+	for _, idx := range ta.Indexes {
+		if idx.Unique {
+			unique++
+		}
+	}
+	return unique
+}
+
 // Index contains info about a table index.
 type Index struct {
-	Name sqlparser.ColIdent
+	Name   sqlparser.ColIdent
+	Unique bool
 	// Columns are the columns comprising the index.
 	Columns []sqlparser.ColIdent
 	// Cardinality[i] is the number of distinct values of Columns[i] in the
@@ -200,8 +224,8 @@ type Index struct {
 }
 
 // NewIndex creates a new Index.
-func NewIndex(name string) *Index {
-	return &Index{Name: sqlparser.NewColIdent(name)}
+func NewIndex(name string, unique bool) *Index {
+	return &Index{Name: sqlparser.NewColIdent(name), Unique: unique}
 }
 
 // AddColumn adds a column to the index.

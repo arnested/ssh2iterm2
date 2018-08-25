@@ -1,3 +1,19 @@
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreedto in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package servenv
 
 import (
@@ -6,9 +22,9 @@ import (
 	"net/url"
 	"time"
 
-	log "github.com/golang/glog"
-	"github.com/youtube/vitess/go/event"
-	"github.com/youtube/vitess/go/proc"
+	"vitess.io/vitess/go/event"
+	"vitess.io/vitess/go/proc"
+	"vitess.io/vitess/go/vt/log"
 )
 
 var (
@@ -18,7 +34,7 @@ var (
 // Run starts listening for RPC and HTTP requests,
 // and blocks until it the process gets a signal.
 func Run(port int) {
-	populateListeningURL()
+	populateListeningURL(int32(port))
 	createGRPCServer()
 	onRunHooks.Fire()
 	serveGRPC()
@@ -26,7 +42,7 @@ func Run(port int) {
 
 	l, err := proc.Listen(fmt.Sprintf("%v", port))
 	if err != nil {
-		log.Fatal(err)
+		log.Exit(err)
 	}
 	go http.Serve(l, nil)
 

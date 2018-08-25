@@ -1,6 +1,18 @@
-// Copyright 2014, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package worker
 
@@ -17,20 +29,21 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/event"
-	"github.com/youtube/vitess/go/sync2"
-	"github.com/youtube/vitess/go/vt/binlog/binlogplayer"
-	"github.com/youtube/vitess/go/vt/discovery"
-	"github.com/youtube/vitess/go/vt/throttler"
-	"github.com/youtube/vitess/go/vt/topo"
-	"github.com/youtube/vitess/go/vt/topo/topoproto"
-	"github.com/youtube/vitess/go/vt/topotools"
-	"github.com/youtube/vitess/go/vt/vtgate/vindexes"
-	"github.com/youtube/vitess/go/vt/worker/events"
-	"github.com/youtube/vitess/go/vt/wrangler"
+	"vitess.io/vitess/go/event"
+	"vitess.io/vitess/go/sqlescape"
+	"vitess.io/vitess/go/sync2"
+	"vitess.io/vitess/go/vt/binlog/binlogplayer"
+	"vitess.io/vitess/go/vt/discovery"
+	"vitess.io/vitess/go/vt/throttler"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/topotools"
+	"vitess.io/vitess/go/vt/vtgate/vindexes"
+	"vitess.io/vitess/go/vt/worker/events"
+	"vitess.io/vitess/go/vt/wrangler"
 
-	tabletmanagerdatapb "github.com/youtube/vitess/go/vt/proto/tabletmanagerdata"
-	topodatapb "github.com/youtube/vitess/go/vt/proto/topodata"
+	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 // LegacySplitCloneWorker will clone the data within a keyspace from a
@@ -82,7 +95,7 @@ type LegacySplitCloneWorker struct {
 	// aliases of tablets that need to have their state refreshed.
 	// Only populated once, read-only after that.
 	refreshAliases [][]*topodatapb.TabletAlias
-	refreshTablets []map[topodatapb.TabletAlias]*topo.TabletInfo
+	refreshTablets []map[string]*topo.TabletInfo
 
 	ev *events.SplitClone
 }
@@ -360,8 +373,8 @@ func (scw *LegacySplitCloneWorker) findTargets(ctx context.Context) error {
 	}
 
 	// Initialize healthcheck and add destination shards to it.
-	scw.healthCheck = discovery.NewHealthCheck(*remoteActionsTimeout, *healthcheckRetryDelay, *healthCheckTimeout)
-	scw.tsc = discovery.NewTabletStatsCache(scw.healthCheck, scw.cell)
+	scw.healthCheck = discovery.NewHealthCheck(*healthcheckRetryDelay, *healthCheckTimeout)
+	scw.tsc = discovery.NewTabletStatsCache(scw.healthCheck, scw.wr.TopoServer(), scw.cell)
 	for _, si := range scw.destinationShards {
 		watcher := discovery.NewShardReplicationWatcher(scw.wr.TopoServer(), scw.healthCheck,
 			scw.cell, si.Keyspace(), si.ShardName(),
@@ -374,7 +387,7 @@ func (scw *LegacySplitCloneWorker) findTargets(ctx context.Context) error {
 	for _, si := range scw.destinationShards {
 		waitCtx, waitCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer waitCancel()
-		if err := scw.tsc.WaitForTablets(waitCtx, scw.cell, si.Keyspace(), si.ShardName(), []topodatapb.TabletType{topodatapb.TabletType_MASTER}); err != nil {
+		if err := scw.tsc.WaitForTablets(waitCtx, scw.cell, si.Keyspace(), si.ShardName(), topodatapb.TabletType_MASTER); err != nil {
 			return fmt.Errorf("cannot find MASTER tablet for destination shard for %v/%v: %v", si.Keyspace(), si.ShardName(), err)
 		}
 		masters := scw.tsc.GetHealthyTabletStats(si.Keyspace(), si.ShardName(), topodatapb.TabletType_MASTER)
@@ -418,7 +431,7 @@ func (scw *LegacySplitCloneWorker) findTargets(ctx context.Context) error {
 // state on these tablets, to minimize the chances of the topo changing in between.
 func (scw *LegacySplitCloneWorker) findRefreshTargets(ctx context.Context) error {
 	scw.refreshAliases = make([][]*topodatapb.TabletAlias, len(scw.destinationShards))
-	scw.refreshTablets = make([]map[topodatapb.TabletAlias]*topo.TabletInfo, len(scw.destinationShards))
+	scw.refreshTablets = make([]map[string]*topo.TabletInfo, len(scw.destinationShards))
 
 	for shardIndex, si := range scw.destinationShards {
 		refreshAliases, refreshTablets, err := resolveRefreshTabletsForShard(ctx, si.Keyspace(), si.ShardName(), scw.wr)
@@ -555,13 +568,14 @@ func (scw *LegacySplitCloneWorker) copy(ctx context.Context) error {
 
 			for _, c := range chunks {
 				sourceWaitGroup.Add(1)
-				go func(td *tabletmanagerdatapb.TableDefinition, tableIndex int, chunk chunk) {
+				go func(td *tabletmanagerdatapb.TableDefinition, shardIndex, tableIndex int, chunk chunk) {
 					defer sourceWaitGroup.Done()
 
 					sema.Acquire()
 					defer sema.Release()
 
 					scw.tableStatusList.threadStarted(tableIndex)
+					defer scw.tableStatusList.threadDone(tableIndex)
 
 					// Start streaming from the source tablets.
 					tp := newSingleTabletProvider(ctx, scw.wr.TopoServer(), scw.sourceAliases[shardIndex])
@@ -581,8 +595,7 @@ func (scw *LegacySplitCloneWorker) copy(ctx context.Context) error {
 					if err := scw.processData(ctx, dbNames, td, tableIndex, rr, rowSplitter, insertChannels, scw.destinationPackCount); err != nil {
 						processError("processData failed: %v", err)
 					}
-					scw.tableStatusList.threadDone(tableIndex)
-				}(td, tableIndex, c)
+				}(td, shardIndex, tableIndex, c)
 			}
 		}
 	}
@@ -673,7 +686,7 @@ func (scw *LegacySplitCloneWorker) copy(ctx context.Context) error {
 				if err != nil {
 					processError("RefreshState failed on tablet %v: %v", ti.AliasString(), err)
 				}
-			}(scw.refreshTablets[shardIndex][*tabletAlias])
+			}(scw.refreshTablets[shardIndex][topoproto.TabletAliasString(tabletAlias)])
 		}
 	}
 	destinationWaitGroup.Wait()
@@ -687,7 +700,7 @@ func (scw *LegacySplitCloneWorker) processData(ctx context.Context, dbNames []st
 	// different dbName.
 	baseCmds := make([]string, len(dbNames))
 	for i, dbName := range dbNames {
-		baseCmds[i] = "INSERT INTO " + escape(dbName) + "." + escape(td.Name) + " (" + strings.Join(escapeAll(td.Columns), ", ") + ") VALUES "
+		baseCmds[i] = "INSERT INTO " + sqlescape.EscapeID(dbName) + "." + sqlescape.EscapeID(td.Name) + " (" + strings.Join(escapeAll(td.Columns), ", ") + ") VALUES "
 	}
 	sr := rowSplitter.StartSplit()
 	packCount := 0

@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+
+# Copyright 2017 Google Inc.
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """A vtctld webdriver test."""
 
 import logging
@@ -43,6 +58,8 @@ def tearDownModule():
 
 
 class TestVtctldWeb(unittest.TestCase):
+
+  WEBDRIVER_TIMEOUT_S = 10
 
   @classmethod
   def setUpClass(cls):
@@ -94,7 +111,11 @@ class TestVtctldWeb(unittest.TestCase):
 
   def _get_keyspace_element(self, keyspace_name):
     """Get a specific keyspace element given a keyspace name."""
-    return self.driver.find_element_by_id('%s-card' % keyspace_name)
+    element_id = '%s-card' % keyspace_name
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
+    wait.until(expected_conditions.visibility_of_element_located(
+        (By.ID, element_id)))
+    return self.driver.find_element_by_id(element_id)
 
   def _get_shards(self, keyspace_name):
     shard_grid = self.driver.find_element_by_id(
@@ -126,6 +147,9 @@ class TestVtctldWeb(unittest.TestCase):
         [(x.split(' ')[0], x.split(' ')[1][1:-1]) for x in tablet_titles])
 
   def _get_shard_record_keyspace_shard(self):
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
+    wait.until(expected_conditions.visibility_of_element_located(
+        (By.ID, 'keyspace-shard')))
     return self.driver.find_element_by_id('keyspace-shard').text
 
   def _get_shard_record_master_tablet(self):
@@ -241,7 +265,7 @@ class TestVtctldWeb(unittest.TestCase):
   def _navigate_to_dashboard(self):
     logging.info('Fetching main vtctld page: %s', self.vtctld_addr)
     self.driver.get('%s/app2' % self.vtctld_addr)
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.ID, 'test_keyspace')))
 
@@ -254,7 +278,7 @@ class TestVtctldWeb(unittest.TestCase):
     first_keyspace_card = keyspace_cards[0]
     shard_stats = first_keyspace_card.find_element_by_tag_name('md-list')
     shard_stats.click()
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.CLASS_NAME, 'vt-card')))
 
@@ -267,14 +291,14 @@ class TestVtctldWeb(unittest.TestCase):
 
     first_shard_card = shard_cards[0]
     first_shard_card.click()
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.ID, '1')))
 
   # Get Elements
   def _get_dashboard_keyspaces(self):
     """Get list of all present keyspaces."""
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.TAG_NAME, 'vt-dashboard')))
     dashboard_content = self.driver.find_element_by_tag_name('vt-dashboard')
@@ -283,7 +307,7 @@ class TestVtctldWeb(unittest.TestCase):
 
   def _get_dashboard_shards(self):
     """Get list of all present shards."""
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.TAG_NAME, 'vt-dashboard')))
     dashboard_content = self.driver.find_element_by_tag_name('vt-dashboard')
@@ -291,7 +315,7 @@ class TestVtctldWeb(unittest.TestCase):
             dashboard_content.find_elements_by_class_name('vt-shard-stats')]
 
   def _get_keyspace_shards(self):
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.TAG_NAME, 'vt-keyspace-view')))
     keyspace_content = self.driver.find_element_by_tag_name('vt-keyspace-view')
@@ -299,7 +323,7 @@ class TestVtctldWeb(unittest.TestCase):
             keyspace_content.find_elements_by_class_name('vt-serving-shard')]
 
   def _get_shard_tablets(self):
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.TAG_NAME, 'vt-shard-view')))
     shard_content = self.driver.find_element_by_tag_name('vt-shard-view')
@@ -536,7 +560,7 @@ class TestVtctldWeb(unittest.TestCase):
     self.driver.get('%s/app2' % self.vtctld_addr)
     status_button = self.driver.find_element_by_partial_link_text('Status')
     status_button.click()
-    wait = WebDriverWait(self.driver, 10)
+    wait = WebDriverWait(self.driver, self.WEBDRIVER_TIMEOUT_S)
     wait.until(expected_conditions.visibility_of_element_located(
         (By.TAG_NAME, 'vt-status')))
 

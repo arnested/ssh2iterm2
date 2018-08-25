@@ -1,18 +1,28 @@
-// Copyright 2015, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package fakevtworkerclient contains a fake for the vtworkerclient interface.
 package fakevtworkerclient
 
 import (
-	"time"
-
 	"golang.org/x/net/context"
 
-	"github.com/youtube/vitess/go/vt/logutil"
-	"github.com/youtube/vitess/go/vt/vtctl/fakevtctlclient"
-	"github.com/youtube/vitess/go/vt/worker/vtworkerclient"
+	"vitess.io/vitess/go/vt/logutil"
+	"vitess.io/vitess/go/vt/vtctl/fakevtctlclient"
+	"vitess.io/vitess/go/vt/worker/vtworkerclient"
 )
 
 // FakeVtworkerClient is a fake which implements the vtworkerclient interface.
@@ -29,7 +39,7 @@ func NewFakeVtworkerClient() *FakeVtworkerClient {
 
 // FakeVtworkerClientFactory returns the current instance and stores the
 // dialed server address in an outer struct.
-func (f *FakeVtworkerClient) FakeVtworkerClientFactory(addr string, dialTimeout time.Duration) (vtworkerclient.Client, error) {
+func (f *FakeVtworkerClient) FakeVtworkerClientFactory(addr string) (vtworkerclient.Client, error) {
 	return &perAddrFakeVtworkerClient{f, addr}, nil
 }
 

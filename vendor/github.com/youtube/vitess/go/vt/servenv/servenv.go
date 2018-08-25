@@ -1,6 +1,18 @@
-// Copyright 2012, Google Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+/*
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 // Package servenv contains functionality that is common for all
 // Vitess server programs.  It defines and initializes command line
@@ -21,6 +33,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -28,13 +41,13 @@ import (
 	// register the HTTP handlers for profiling
 	_ "net/http/pprof"
 
-	log "github.com/golang/glog"
-	"github.com/youtube/vitess/go/event"
-	"github.com/youtube/vitess/go/netutil"
-	"github.com/youtube/vitess/go/stats"
+	"vitess.io/vitess/go/event"
+	"vitess.io/vitess/go/netutil"
+	"vitess.io/vitess/go/stats"
+	"vitess.io/vitess/go/vt/log"
 
 	// register the proper init and shutdown hooks for logging
-	_ "github.com/youtube/vitess/go/vt/logutil"
+	_ "vitess.io/vitess/go/vt/logutil"
 )
 
 var (
@@ -71,7 +84,7 @@ func Init() {
 	// Once you run as root, you pretty much destroy the chances of a
 	// non-privileged user starting the program correctly.
 	if uid := os.Getuid(); uid == 0 {
-		log.Fatalf("servenv.Init: running this as root makes no sense")
+		log.Exitf("servenv.Init: running this as root makes no sense")
 	}
 
 	runtime.MemProfileRate = *memProfileRate
@@ -85,23 +98,23 @@ func Init() {
 	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, fdLimit); err != nil {
 		log.Errorf("max-open-fds failed: %v", err)
 	}
-	fdl := stats.NewInt("MaxFds")
+	fdl := stats.NewGauge("MaxFds", "File descriptor limit")
 	fdl.Set(int64(fdLimit.Cur))
 
 	onInitHooks.Fire()
 }
 
-func populateListeningURL() {
+func populateListeningURL(port int32) {
 	host, err := netutil.FullyQualifiedHostname()
 	if err != nil {
 		host, err = os.Hostname()
 		if err != nil {
-			log.Fatalf("os.Hostname() failed: %v", err)
+			log.Exitf("os.Hostname() failed: %v", err)
 		}
 	}
 	ListeningURL = url.URL{
 		Scheme: "http",
-		Host:   netutil.JoinHostPort(host, int32(*Port)),
+		Host:   netutil.JoinHostPort(host, port),
 		Path:   "/",
 	}
 }
@@ -180,4 +193,38 @@ func RegisterDefaultFlags() {
 // RunDefault calls Run() with the parameters from the flags.
 func RunDefault() {
 	Run(*Port)
+}
+
+// ParseFlags initializes flags and handles the common case when no positional
+// arguments are expected.
+func ParseFlags(cmd string) {
+	flag.Parse()
+
+	if *Version {
+		AppVersion.Print()
+		os.Exit(0)
+	}
+
+	args := flag.Args()
+	if len(args) > 0 {
+		flag.Usage()
+		log.Exitf("%s doesn't take any positional arguments, got '%s'", cmd, strings.Join(args, " "))
+	}
+}
+
+// ParseFlagsWithArgs initializes flags and returns the positional arguments
+func ParseFlagsWithArgs(cmd string) []string {
+	flag.Parse()
+
+	if *Version {
+		AppVersion.Print()
+		os.Exit(0)
+	}
+
+	args := flag.Args()
+	if len(args) == 0 {
+		log.Exitf("%s expected at least one positional argument", cmd)
+	}
+
+	return args
 }
