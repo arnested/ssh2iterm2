@@ -2,12 +2,12 @@
 
 
 [[projects]]
-  branch = "master"
-  digest = "1:3ae02f30f9f7a0c3f57f8178c44c309141c75a3f0e3350d90cbd51bd98fd74bb"
-  name = "github.com/mikkeloscar/sshconfig"
+  digest = "1:41e0bed5df4f9fd04c418bf9b6b7179b3671e416ad6175332601ca1c8dc74606"
+  name = "github.com/kevinburke/ssh_config"
   packages = ["."]
   pruneopts = ""
-  revision = "056592cb6962e83d208af2e58d90c3759ba09825"
+  revision = "81db2a75821ed34e682567d48be488a1c3121088"
+  version = "0.5"
 
 [[projects]]
   branch = "master"
@@ -16,6 +16,14 @@
   packages = ["."]
   pruneopts = ""
   revision = "ae18d6b8b3205b561c79e8e5f69bff09736185f4"
+
+[[projects]]
+  digest = "1:049b5bee78dfdc9628ee0e557219c41f683e5b06c5a5f20eaba0105ccc586689"
+  name = "github.com/pelletier/go-buffruneio"
+  packages = ["."]
+  pruneopts = ""
+  revision = "c37440a7cf42ac63b919c752ca73a85067e05992"
+  version = "v0.2.0"
 
 [[projects]]
   digest = "1:7f569d906bdd20d906b606415b7d794f798f91a62fcfb6a4daa6d50690fb7a3f"
@@ -37,7 +45,7 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
-    "github.com/mikkeloscar/sshconfig",
+    "github.com/kevinburke/ssh_config",
     "github.com/mitchellh/go-homedir",
     "github.com/satori/go.uuid",
     "github.com/youtube/vitess/go/ioutil2",

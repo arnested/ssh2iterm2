@@ -7,10 +7,12 @@ addons:
     repo_token: 1c8a05186ce71956db63ee2da6f0a4c475200cfbfbf852a56bd26b25f3b352b9
 
 before_install:
+  - go get github.com/frapposelli/wwhrd
   - curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
 
 script:
   - dep check
+  - wwhrd check
   - go test -v -cover ./...
 
 after_success:

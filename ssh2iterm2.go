@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mikkeloscar/sshconfig"
+	"github.com/kevinburke/ssh_config"
 	homedir "github.com/mitchellh/go-homedir"
 	uuid "github.com/satori/go.uuid"
 	"github.com/youtube/vitess/go/ioutil2"
@@ -59,11 +59,13 @@ func main() {
 	profiles := &profilelist{}
 
 	for _, file := range files {
-		hosts, _ := sshconfig.ParseSSHConfig(file)
+		fileContent, _ := os.Open(file)
+		cfg, _ := ssh_config.Decode(fileContent)
 		tag := tag(file)
 
-		for _, host := range hosts {
-			for _, name := range host.Host {
+		for _, host := range cfg.Hosts {
+			for _, pattern := range host.Patterns {
+				name := pattern.String()
 				match, _ := regexp.MatchString("\\*", name)
 				if !match {
 					uuid := uuid.NewV5(ns, name).String()
