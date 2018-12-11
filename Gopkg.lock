@@ -34,12 +34,12 @@
   version = "v1.2.0"
 
 [[projects]]
-  digest = "1:c04f8425afbb4fe70847f832fb4f773db79f9b0460bdbdd112282a369a401638"
+  digest = "1:9beaf22751d7ea8c14ef773b03ab95bbcce4db3a2de1c3d66e78965334d9934d"
   name = "github.com/youtube/vitess"
   packages = ["go/ioutil2"]
   pruneopts = ""
-  revision = "66e84fadcc1a7e956e7ffcebcaaba0b04132ca1f"
-  version = "v2.2"
+  revision = "4f192d1003d128e6d399f0a3b37747d9b970d70c"
+  version = "v3.0"
 
 [solve-meta]
   analyzer-name = "dep"
