@@ -17,6 +17,7 @@ install: []
 script:
   - go test -v -race -cover ./...
   - go mod vendor && wwhrd check
+  - rm -rf vendor
 
 after_success:
   - GOOS=darwin GOARCH=amd64 go build
