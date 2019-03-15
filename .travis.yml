@@ -1,19 +1,22 @@
 language: go
 go:
-  - '1.11'
+  - '1.12'
+
+env:
+  - GO111MODULE=on
 
 addons:
   code_climate:
     repo_token: 1c8a05186ce71956db63ee2da6f0a4c475200cfbfbf852a56bd26b25f3b352b9
 
 before_install:
-  - go get github.com/frapposelli/wwhrd
-  - curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+  - GO111MODULE=off go get github.com/frapposelli/wwhrd
+
+install: []
 
 script:
-  - dep check
-  - wwhrd check
-  - go test -v -cover ./...
+  - go test -v -race -cover ./...
+  - go mod vendor && wwhrd check
 
 after_success:
   - GOOS=darwin GOARCH=amd64 go build
