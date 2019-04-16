@@ -57,6 +57,7 @@ func main() {
 	}
 
 	profiles := &profilelist{}
+	r, _ := regexp.Compile(`\*`)
 
 	for _, file := range files {
 		fileContent, _ := os.Open(file)
@@ -66,7 +67,7 @@ func main() {
 		for _, host := range cfg.Hosts {
 			for _, pattern := range host.Patterns {
 				name := pattern.String()
-				match, _ := regexp.MatchString("\\*", name)
+				match := r.MatchString(name)
 				if !match {
 					uuid := uuid.NewV5(ns, name).String()
 					profiles.Profiles = append(profiles.Profiles, &profile{
@@ -95,7 +96,10 @@ func main() {
 	}
 
 	dynamicProfileFile, _ := homedir.Expand("~/Library/Application Support/iTerm2/DynamicProfiles/ssh2iterm2.json")
-	ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
+	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func tag(filename string) string {
