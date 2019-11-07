@@ -1,0 +1,36 @@
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    goos:
+      - darwin
+    goarch:
+      - amd64
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+brews:
+  - github:
+      owner: arnested
+      name: homebrew-ssh2iterm2
+    folder: Formula
+    homepage: "https://github.com/arnested/ssh2iterm2"
+    description: "Create iTerm2 dynamic profile from SSH config"
+    install: |
+      bin.install "ssh2iterm2"
