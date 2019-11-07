@@ -40,53 +40,47 @@ type profilelist struct {
 }
 
 func main() {
-	ns, _ := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
+	ns, err := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
+
+	if err != nil {
+		panic(err)
+	}
 
 	glob, present := os.LookupEnv("SSH2ITERM2_GLOB")
 
 	if !present {
-		glob = "~/.ssh/config"
+		userHomeDir, err := os.UserHomeDir()
+
+		if err != nil {
+			panic(err)
+		}
+
+		glob = userHomeDir + "/.ssh/config"
 	}
 
-	sshconfGlob, _ := homedir.Expand(glob)
-	files, _ := filepath.Glob(sshconfGlob)
+	sshconfGlob, err := homedir.Expand(glob)
+
+	if err != nil {
+		panic(err)
+	}
+
+	files, err := filepath.Glob(sshconfGlob)
+
+	if err != nil {
+		panic(err)
+	}
 
 	ssh, err := exec.LookPath("ssh")
 	if err != nil {
 		panic(err)
 	}
 
+	r := regexp.MustCompile(`\*`)
+
 	profiles := &profilelist{}
-	r, _ := regexp.Compile(`\*`)
 
 	for _, file := range files {
-		fileContent, _ := os.Open(file)
-		cfg, _ := ssh_config.Decode(fileContent)
-		tag := tag(file)
-
-		for _, host := range cfg.Hosts {
-			for _, pattern := range host.Patterns {
-				name := pattern.String()
-				match := r.MatchString(name)
-				if !match {
-					uuid := uuid.NewV5(ns, name).String()
-					profiles.Profiles = append(profiles.Profiles, &profile{
-						Badge:         name,
-						GUID:          uuid,
-						Name:          name,
-						Command:       fmt.Sprintf("%s %s", ssh, name),
-						CustomCommand: "Yes",
-						Triggers: &triggerlist{&trigger{
-							Partial:   true,
-							Parameter: name,
-							Regex:     "\\[sudo\\] password for",
-							Action:    "PasswordTrigger",
-						}},
-						Tags: []string{tag},
-					})
-				}
-			}
-		}
+		processFile(file, r, ssh, ns, profiles)
 	}
 
 	json, err := json.MarshalIndent(profiles, "", "    ")
@@ -95,15 +89,73 @@ func main() {
 		panic(err)
 	}
 
-	dynamicProfileFile, _ := homedir.Expand("~/Library/Application Support/iTerm2/DynamicProfiles/ssh2iterm2.json")
+	userConfigDir, err := os.UserConfigDir()
+
+	if err != nil {
+		panic(err)
+	}
+
+	dynamicProfileFile, err := homedir.Expand(userConfigDir + "/iTerm2/DynamicProfiles/ssh2iterm2.json")
+
+	if err != nil {
+		panic(err)
+	}
+
 	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
 	if err != nil {
 		panic(err)
 	}
 }
 
+func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profiles *profilelist) {
+	fileContent, err := os.Open(file)
+
+	if err != nil {
+		panic(err)
+	}
+
+	cfg, err := ssh_config.Decode(fileContent)
+
+	if err != nil {
+		panic(err)
+	}
+
+	tag := tag(file)
+
+	for _, host := range cfg.Hosts {
+		for _, pattern := range host.Patterns {
+			hostname := pattern.String()
+			name := hostname
+			badge := hostname
+			comment := strings.TrimSpace(host.EOLComment)
+			if comment != "" {
+				badge = comment
+				name = fmt.Sprintf("%s (%s)", hostname, comment)
+			}
+			match := r.MatchString(name)
+			if !match {
+				uuid := uuid.NewV5(ns, name).String()
+				profiles.Profiles = append(profiles.Profiles, &profile{
+					Badge:         badge,
+					GUID:          uuid,
+					Name:          name,
+					Command:       fmt.Sprintf("%s %s", ssh, hostname),
+					CustomCommand: "Yes",
+					Triggers: &triggerlist{&trigger{
+						Partial:   true,
+						Parameter: hostname,
+						Regex:     "\\[sudo\\] password for",
+						Action:    "PasswordTrigger",
+					}},
+					Tags: []string{tag},
+				})
+			}
+		}
+	}
+}
+
 func tag(filename string) string {
 	base := path.Base(strings.TrimSuffix(filename, path.Ext(filename)))
-	var re = regexp.MustCompile(`^[0-9]+_`)
+	re := regexp.MustCompile(`^[0-9]+_`)
 	return re.ReplaceAllString(base, `$1`)
 }
