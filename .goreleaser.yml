@@ -11,6 +11,8 @@ builds:
       - darwin
     goarch:
       - amd64
+    ldflags:
+      - -X main.GitSummary={{ .Version }}
 
 checksum:
   name_template: 'checksums.txt'
