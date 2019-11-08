@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path"
@@ -11,8 +12,9 @@ import (
 	"strings"
 
 	"github.com/kevinburke/ssh_config"
-	homedir "github.com/mitchellh/go-homedir"
+	"github.com/mitchellh/go-homedir"
 	uuid "github.com/satori/go.uuid"
+	"github.com/urfave/cli"
 	"github.com/youtube/vitess/go/ioutil2"
 )
 
@@ -39,45 +41,90 @@ type profilelist struct {
 	Profiles []*profile `json:",omitempty"`
 }
 
+// Version string to be set at compile time via command line (-ldflags "-X main.GitSummary=1.2.3")
+var (
+	GitSummary string
+)
+
 func main() {
-	ns, err := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
+	app := cli.NewApp()
+	app.Name = "ssh2iterm2"
+	app.Usage = "Create iTerm2 dynamic profile from SSH config"
+	app.EnableBashCompletion = true
+	app.Authors = []cli.Author{
+		{
+			Name:  "Arne Jørgensen",
+			Email: "arne@arnested.dk",
+		},
+	}
+	app.Version = GitSummary
+
+	userHomeDir, err := os.UserHomeDir()
 
 	if err != nil {
-		panic(err)
-	}
-
-	glob, present := os.LookupEnv("SSH2ITERM2_GLOB")
-
-	if !present {
-		userHomeDir, err := os.UserHomeDir()
-
-		if err != nil {
-			panic(err)
-		}
-
-		glob = userHomeDir + "/.ssh/config"
-	}
-
-	sshconfGlob, err := homedir.Expand(glob)
-
-	if err != nil {
-		panic(err)
-	}
-
-	files, err := filepath.Glob(sshconfGlob)
-
-	if err != nil {
-		panic(err)
+		userHomeDir = "~/"
 	}
 
 	ssh, err := exec.LookPath("ssh")
+
 	if err != nil {
-		panic(err)
+		ssh = "ssh"
+	}
+
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:      "glob",
+			Value:     userHomeDir + "/.ssh/config",
+			Usage:     "A file `GLOB` matching ssh config file(s)",
+			EnvVar:    "SSH2ITERM2_GLOB",
+			TakesFile: true,
+		},
+		cli.StringFlag{
+			Name:      "ssh",
+			Value:     ssh,
+			Usage:     "The ssh client `PATH`",
+			EnvVar:    "SSH2ITERM2_SSH_PATH",
+			TakesFile: true,
+		},
+	}
+
+	app.Action = ssh2iterm2
+
+	err = app.Run(os.Args)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func ssh2iterm2(c *cli.Context) error {
+	ns, err := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
+
+	glob := c.String("glob")
+
+	if err != nil {
+		return err
+	}
+
+	glob, err = homedir.Expand(glob)
+
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Glob is %q", glob)
+
+	files, err := filepath.Glob(glob)
+	if err != nil {
+		return err
 	}
 
 	r := regexp.MustCompile(`\*`)
 
 	profiles := &profilelist{}
+
+	ssh := c.String("ssh")
+	log.Printf("SSH cli is %q", ssh)
 
 	for _, file := range files {
 		processFile(file, r, ssh, ns, profiles)
@@ -86,38 +133,42 @@ func main() {
 	json, err := json.MarshalIndent(profiles, "", "    ")
 
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	userConfigDir, err := os.UserConfigDir()
 
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	dynamicProfileFile, err := homedir.Expand(userConfigDir + "/iTerm2/DynamicProfiles/ssh2iterm2.json")
 
 	if err != nil {
-		panic(err)
+		return err
 	}
 
+	log.Printf("Writing %q", dynamicProfileFile)
 	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
 	if err != nil {
-		panic(err)
+		return err
 	}
+
+	return nil
 }
 
 func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profiles *profilelist) {
+	log.Printf("Parsing %q", file)
 	fileContent, err := os.Open(file)
 
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	cfg, err := ssh_config.Decode(fileContent)
 
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	tag := tag(file)
@@ -135,11 +186,12 @@ func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profil
 			match := r.MatchString(name)
 			if !match {
 				uuid := uuid.NewV5(ns, name).String()
+				log.Printf("Identified %s", name)
 				profiles.Profiles = append(profiles.Profiles, &profile{
 					Badge:         badge,
 					GUID:          uuid,
 					Name:          name,
-					Command:       fmt.Sprintf("%s %s", ssh, hostname),
+					Command:       fmt.Sprintf("%q %q", ssh, hostname),
 					CustomCommand: "Yes",
 					Triggers: &triggerlist{&trigger{
 						Partial:   true,
