@@ -1,4 +1,10 @@
 ---
+checks:
+  # Doing early returns results in more returns so we increase the
+  # threshold.
+  return-statements:
+    config:
+      threshold: 8
 engines:
   fixme:
     enabled: true
