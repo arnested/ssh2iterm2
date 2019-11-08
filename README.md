@@ -22,6 +22,21 @@ I.e. set `SSH2ITERM2_GLOB=~/.ssh/config.d/*.conf` to run through all
 
 The glob pattern should follow Gos [path/filepath patterns](https://golang.org/pkg/path/filepath/#Match).
 
+## Config file
+
+Config will be read from `~/Library/Application
+Support/ssh2iterm2.yaml` if the file exists.
+
+The content of the config file could look like:
+
+```yaml
+glob: ~/.ssh/**/*.conf
+ssh: /usr/local/bin/ssh
+```
+
+An alternate config file can be read using the `--config` option or
+the `$SSH2ITERM2_CONFIG_FILE` environment variable.
+
 ## How to run
 
 Just run the binary without any arguments in whatever directory you

@@ -15,6 +15,7 @@ import (
 	"github.com/mitchellh/go-homedir"
 	uuid "github.com/satori/go.uuid"
 	"github.com/urfave/cli"
+	"github.com/urfave/cli/altsrc"
 	"github.com/youtube/vitess/go/ioutil2"
 )
 
@@ -71,21 +72,39 @@ func main() {
 		ssh = "ssh"
 	}
 
+	configPath := ""
+	userConfigDir, err := os.UserConfigDir()
+
+	if err == nil {
+		configPath = userConfigDir + "/ssh2iterm2.yaml"
+	}
+
 	app.Flags = []cli.Flag{
-		cli.StringFlag{
+		altsrc.NewStringFlag(cli.StringFlag{
 			Name:      "glob",
 			Value:     userHomeDir + "/.ssh/config",
 			Usage:     "A file `GLOB` matching ssh config file(s)",
 			EnvVar:    "SSH2ITERM2_GLOB",
 			TakesFile: true,
-		},
-		cli.StringFlag{
+		}),
+		altsrc.NewStringFlag(cli.StringFlag{
 			Name:      "ssh",
 			Value:     ssh,
 			Usage:     "The ssh client `PATH`",
 			EnvVar:    "SSH2ITERM2_SSH_PATH",
 			TakesFile: true,
+		}),
+		cli.StringFlag{
+			Name:      "config",
+			Value:     configPath,
+			Usage:     "Read config from `FILE`",
+			EnvVar:    "SSH2ITERM2_CONFIG_FILE",
+			TakesFile: true,
 		},
+	}
+
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		app.Before = altsrc.InitInputSourceWithContext(app.Flags, altsrc.NewYamlSourceFromFlagFunc("config"))
 	}
 
 	app.Action = ssh2iterm2
