@@ -7,6 +7,10 @@
 
 Converts your `~/.ssh/config` to Dynamic profiles in iTerm2.
 
+```shell
+$ brew install arnested/ssh2iterm2/ssh2iterm2
+```
+
 By default it looks up your `Host` definitions in `~/.ssh/config`.
 
 You can supply another location via the environment variable
