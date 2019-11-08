@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/kevinburke/ssh_config"
+	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
 	uuid "github.com/satori/go.uuid"
 	"github.com/urfave/cli"
@@ -48,6 +49,10 @@ var (
 )
 
 func main() {
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		log.SetFlags(0)
+	}
+
 	app := cli.NewApp()
 	app.Name = "ssh2iterm2"
 	app.Usage = "Create iTerm2 dynamic profile from SSH config"

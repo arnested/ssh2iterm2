@@ -6,6 +6,7 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/kevinburke/ssh_config v0.0.0-20190725054713-01f96b0aa0cd
 	github.com/kr/pretty v0.1.0 // indirect
+	github.com/mattn/go-isatty v0.0.10
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/urfave/cli v1.22.1
