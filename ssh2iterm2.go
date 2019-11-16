@@ -201,6 +201,7 @@ func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profil
 
 	if err != nil {
 		log.Print(err)
+		return
 	}
 
 	tag := tag(file)
