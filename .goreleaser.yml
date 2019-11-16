@@ -5,7 +5,6 @@ before:
 
 builds:
   - env:
-      - CGO_ENABLED=0
       - GO111MODULE=on
     goos:
       - darwin
@@ -13,6 +12,8 @@ builds:
       - amd64
     ldflags:
       - -X main.GitSummary={{ .Version }}
+    flags:
+      - -trimpath
 
 checksum:
   name_template: 'checksums.txt'
@@ -36,3 +37,21 @@ brews:
     description: "Create iTerm2 dynamic profile from SSH config"
     install: |
       bin.install "ssh2iterm2"
+    plist: |
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+        <dict>
+          <key>Label</key>
+          <string>#{plist_name}</string>
+          <key>ProgramArguments</key>
+          <array>
+            <string>#{opt_bin}/ssh2iterm2</string>
+            <string>watch</string>
+          </array>
+          <key>RunAtLoad</key>
+          <true/>
+          <key>KeepAlive</key>
+          <true/>
+        </dict>
+      </plist>
