@@ -14,6 +14,7 @@ import (
 	"github.com/kevinburke/ssh_config"
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
+	"github.com/rjeczalik/notify"
 	uuid "github.com/satori/go.uuid"
 	"github.com/urfave/cli"
 	"github.com/urfave/cli/altsrc"
@@ -112,6 +113,14 @@ func main() {
 		app.Before = altsrc.InitInputSourceWithContext(app.Flags, altsrc.NewYamlSourceFromFlagFunc("config"))
 	}
 
+	app.Commands = []cli.Command{
+		{
+			Name:   "watch",
+			Usage:  "Watch folder for changes",
+			Action: watch,
+		},
+	}
+
 	app.Action = ssh2iterm2
 
 	err = app.Run(os.Args)
@@ -124,13 +133,11 @@ func main() {
 func ssh2iterm2(c *cli.Context) error {
 	ns, err := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
 
-	glob := c.String("glob")
-
 	if err != nil {
 		return err
 	}
 
-	glob, err = homedir.Expand(glob)
+	glob, err := homedir.Expand(c.GlobalString("glob"))
 
 	if err != nil {
 		return err
@@ -147,7 +154,7 @@ func ssh2iterm2(c *cli.Context) error {
 
 	profiles := &profilelist{}
 
-	ssh := c.String("ssh")
+	ssh := c.GlobalString("ssh")
 	log.Printf("SSH cli is %q", ssh)
 
 	for _, file := range files {
@@ -186,13 +193,14 @@ func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profil
 	fileContent, err := os.Open(file)
 
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 
 	cfg, err := ssh_config.Decode(fileContent)
 
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
 	}
 
 	tag := tag(file)
@@ -234,4 +242,30 @@ func tag(filename string) string {
 	base := path.Base(strings.TrimSuffix(filename, path.Ext(filename)))
 	re := regexp.MustCompile(`^[0-9]+_`)
 	return re.ReplaceAllString(base, `$1`)
+}
+
+func watch(c *cli.Context) error {
+	glob, err := homedir.Expand(c.GlobalString("glob"))
+
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(strings.SplitAfterN(glob, "*", 2)[0])
+	log.Printf("Watching is %q", dir)
+
+	eventChan := make(chan notify.EventInfo, 10)
+
+	if err := notify.Watch(dir+"/...", eventChan, notify.All); err != nil {
+		log.Fatal(err)
+	}
+
+	defer notify.Stop(eventChan)
+
+	for {
+		eventInfo := <-eventChan
+		if match, err := filepath.Match(glob, eventInfo.Path()); err == nil && match {
+			_ = ssh2iterm2(c)
+		}
+	}
 }

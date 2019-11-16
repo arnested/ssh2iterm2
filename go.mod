@@ -8,6 +8,7 @@ require (
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.10
 	github.com/mitchellh/go-homedir v1.1.0
+	github.com/rjeczalik/notify v0.9.2
 	github.com/satori/go.uuid v1.2.0
 	github.com/urfave/cli v1.22.1
 	github.com/youtube/vitess v2.1.1+incompatible
