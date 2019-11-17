@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 	"github.com/urfave/cli"
 	"github.com/urfave/cli/altsrc"
 	"github.com/youtube/vitess/go/ioutil2"
+	"gopkg.in/yaml.v3"
 )
 
 type trigger struct {
@@ -115,13 +117,29 @@ func main() {
 
 	app.Commands = []cli.Command{
 		{
+			Name:   "sync",
+			Usage:  "Sync ssh config to iTerm2 dynamic profiles",
+			Action: ssh2iterm2,
+		},
+		{
 			Name:   "watch",
-			Usage:  "Watch folder for changes",
+			Usage:  "Continuously watch and sync folder for changes",
 			Action: watch,
 		},
+		{
+			Name:   "edit-config",
+			Usage:  "Edit config file",
+			Action: editConfig,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "editor",
+					Value:  "vi",
+					Usage:  "Use `EDITOR` to edit config file (create it of it doesn't exist)",
+					EnvVar: "EDITOR",
+				},
+			},
+		},
 	}
-
-	app.Action = ssh2iterm2
 
 	err = app.Run(os.Args)
 
@@ -269,4 +287,45 @@ func watch(c *cli.Context) error {
 			_ = ssh2iterm2(c)
 		}
 	}
+}
+
+type config struct {
+	Glob string `yaml:"glob"`
+	SSH  string `yaml:"ssh"`
+}
+
+func editConfig(c *cli.Context) error {
+	configFile := c.GlobalString("config")
+
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		err := createConfig(configFile, config{
+			Glob: c.GlobalString("glob"),
+			SSH:  c.GlobalString("ssh"),
+		})
+
+		if err != nil {
+			return err
+		}
+	}
+
+	editCmd := c.String("editor") + " '" + configFile + "'"
+	cmd := exec.Command("sh", "-c", editCmd)
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+func createConfig(configFile string, config config) error {
+	data, err := yaml.Marshal(config)
+
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(configFile, data, 0644)
+
+	return err
 }
