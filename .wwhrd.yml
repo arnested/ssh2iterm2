@@ -3,7 +3,8 @@ whitelist:
   - Apache-2.0
   - FreeBSD
   - MIT
-  - NewBSD
+  - BSD-2-Clause
+  - BSD-3-Clause
 
 exceptions:
   - github.com/pelletier/go-buffruneio # Uses the "MIT" license
