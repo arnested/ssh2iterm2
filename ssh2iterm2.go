@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/gops/agent"
 	"github.com/kevinburke/ssh_config"
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
@@ -109,10 +110,26 @@ func main() {
 			EnvVar:    "SSH2ITERM2_CONFIG_FILE",
 			TakesFile: true,
 		},
+		altsrc.NewBoolFlag(cli.BoolFlag{
+			Name:   "enable-gops-agent",
+			Usage:  "Run with a gops agent (see https://pkg.go.dev/github.com/google/gops?tab=overview)",
+			EnvVar: "SSH2ITERM2_WITH_GOPS_AGENT",
+		}),
 	}
 
-	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-		app.Before = altsrc.InitInputSourceWithContext(app.Flags, altsrc.NewYamlSourceFromFlagFunc("config"))
+	app.Before = func(c *cli.Context) error {
+		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+			initConfig := altsrc.InitInputSourceWithContext(app.Flags, altsrc.NewYamlSourceFromFlagFunc("config"))
+			initConfig(c)
+		}
+
+		if c.GlobalBool("enable-gops-agent") {
+			if err := agent.Listen(agent.Options{ShutdownCleanup: true}); err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		return nil
 	}
 
 	app.Commands = []cli.Command{
