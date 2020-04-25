@@ -39,6 +39,7 @@ type profile struct {
 	CustomCommand string       `json:"Custom Command"`
 	Triggers      *triggerlist `json:",omitempty"`
 	Tags          []string     `json:",omitempty"`
+	BoundHosts    []string     `json:"Bound Hosts,omitempty"`
 }
 
 type triggerlist []*trigger
@@ -102,6 +103,11 @@ func main() {
 			Usage:     "The ssh client `PATH`",
 			EnvVar:    "SSH2ITERM2_SSH_PATH",
 			TakesFile: true,
+		}),
+		altsrc.NewBoolFlag(cli.BoolFlag{
+			Name:   "automatic-profile-switching",
+			Usage:  "Add hostname for automatic profile switching`",
+			EnvVar: "SSH2ITERM2_AUTOMATIC_PROFILE_SWITCHING",
 		}),
 		cli.StringFlag{
 			Name:      "config",
@@ -189,11 +195,12 @@ func ssh2iterm2(c *cli.Context) error {
 
 	profiles := &profilelist{}
 
+	automaticProfileSwitching := c.GlobalBool("automatic-profile-switching")
 	ssh := c.GlobalString("ssh")
 	log.Printf("SSH cli is %q", ssh)
 
 	for _, file := range files {
-		processFile(file, r, ssh, ns, profiles)
+		processFile(file, r, ssh, ns, profiles, automaticProfileSwitching)
 	}
 
 	json, err := json.MarshalIndent(profiles, "", "    ")
@@ -223,7 +230,7 @@ func ssh2iterm2(c *cli.Context) error {
 	return nil
 }
 
-func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profiles *profilelist) {
+func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profiles *profilelist, automaticProfileSwitching bool) {
 	log.Printf("Parsing %q", file)
 	fileContent, err := os.Open(file)
 
@@ -255,6 +262,12 @@ func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profil
 			if !match {
 				uuid := uuid.NewV5(ns, name).String()
 				log.Printf("Identified %s", name)
+
+				var boundHosts []string
+				if automaticProfileSwitching {
+					boundHosts = []string{hostname}
+				}
+
 				profiles.Profiles = append(profiles.Profiles, &profile{
 					Badge:         badge,
 					GUID:          uuid,
@@ -267,7 +280,8 @@ func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profil
 						Regex:     "\\[sudo\\] password for",
 						Action:    "PasswordTrigger",
 					}},
-					Tags: []string{tag},
+					Tags:       []string{tag},
+					BoundHosts: boundHosts,
 				})
 			}
 		}
