@@ -48,11 +48,10 @@ type profilelist struct {
 	Profiles []*profile `json:",omitempty"`
 }
 
-// Version string to be set at compile time via command line (-ldflags "-X main.GitSummary=1.2.3")
-var (
-	GitSummary string
-)
+// GitSummary is the version string to be set at compile time via command line.
+var GitSummary string //nolint:gochecknoglobals
 
+//nolint:funlen // needs refactoring.
 func main() {
 	if isatty.IsTerminal(os.Stdout.Fd()) {
 		log.SetFlags(0)
@@ -71,13 +70,11 @@ func main() {
 	app.Version = GitSummary
 
 	userHomeDir, err := os.UserHomeDir()
-
 	if err != nil {
 		userHomeDir = "~/"
 	}
 
 	ssh, err := exec.LookPath("ssh")
-
 	if err != nil {
 		ssh = "ssh"
 	}
@@ -126,7 +123,7 @@ func main() {
 	app.Before = func(c *cli.Context) error {
 		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 			initConfig := altsrc.InitInputSourceWithContext(app.Flags, altsrc.NewYamlSourceFromFlagFunc("config"))
-			initConfig(c)
+			_ = initConfig(c)
 		}
 
 		if c.GlobalBool("enable-gops-agent") {
@@ -173,13 +170,11 @@ func main() {
 
 func ssh2iterm2(c *cli.Context) error {
 	ns, err := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
-
 	if err != nil {
 		return err
 	}
 
 	glob, err := homedir.Expand(c.GlobalString("glob"))
-
 	if err != nil {
 		return err
 	}
@@ -204,25 +199,23 @@ func ssh2iterm2(c *cli.Context) error {
 	}
 
 	json, err := json.MarshalIndent(profiles, "", "    ")
-
 	if err != nil {
 		return err
 	}
 
 	userConfigDir, err := os.UserConfigDir()
-
 	if err != nil {
 		return err
 	}
 
 	dynamicProfileFile, err := homedir.Expand(userConfigDir + "/iTerm2/DynamicProfiles/ssh2iterm2.json")
-
 	if err != nil {
 		return err
 	}
 
 	log.Printf("Writing %q", dynamicProfileFile)
-	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0644)
+	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0600)
+
 	if err != nil {
 		return err
 	}
@@ -230,17 +223,23 @@ func ssh2iterm2(c *cli.Context) error {
 	return nil
 }
 
-func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profiles *profilelist, automaticProfileSwitching bool) {
+//nolint:funlen // needs refactoring.
+func processFile(file string,
+	r *regexp.Regexp,
+	ssh string,
+	ns uuid.UUID,
+	profiles *profilelist,
+	automaticProfileSwitching bool,
+) {
 	log.Printf("Parsing %q", file)
-	fileContent, err := os.Open(file)
 
+	fileContent, err := os.Open(file)
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
 	cfg, err := ssh_config.Decode(fileContent)
-
 	if err != nil {
 		log.Print(err)
 		return
@@ -254,10 +253,12 @@ func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profil
 			name := hostname
 			badge := hostname
 			comment := strings.TrimSpace(host.EOLComment)
+
 			if comment != "" {
 				badge = comment
 				name = fmt.Sprintf("%s (%s)", hostname, comment)
 			}
+
 			match := r.MatchString(name)
 			if !match {
 				uuid := uuid.NewV5(ns, name).String()
@@ -291,12 +292,14 @@ func processFile(file string, r *regexp.Regexp, ssh string, ns uuid.UUID, profil
 func tag(filename string) string {
 	base := path.Base(strings.TrimSuffix(filename, path.Ext(filename)))
 	re := regexp.MustCompile(`^[0-9]+_`)
+
 	return re.ReplaceAllString(base, `$1`)
 }
 
+const channelBufferSize = 10
+
 func watch(c *cli.Context) error {
 	glob, err := homedir.Expand(c.GlobalString("glob"))
-
 	if err != nil {
 		return err
 	}
@@ -304,7 +307,7 @@ func watch(c *cli.Context) error {
 	dir := filepath.Dir(strings.SplitAfterN(glob, "*", 2)[0])
 	log.Printf("Watching is %q", dir)
 
-	eventChan := make(chan notify.EventInfo, 10)
+	eventChan := make(chan notify.EventInfo, channelBufferSize)
 
 	if err := notify.Watch(dir+"/...", eventChan, notify.All); err != nil {
 		log.Fatal(err)
@@ -333,7 +336,6 @@ func editConfig(c *cli.Context) error {
 			Glob: c.GlobalString("glob"),
 			SSH:  c.GlobalString("ssh"),
 		})
-
 		if err != nil {
 			return err
 		}
@@ -351,12 +353,14 @@ func editConfig(c *cli.Context) error {
 
 func createConfig(configFile string, config config) error {
 	data, err := yaml.Marshal(config)
-
 	if err != nil {
 		return err
 	}
 
-	err = ioutil.WriteFile(configFile, data, 0644)
+	err = ioutil.WriteFile(configFile, data, 0600)
+	if err != nil {
+		return err
+	}
 
-	return err
-}
+	return nil
+} //nolint:gofumpt // false lint error with golangci-lint.
