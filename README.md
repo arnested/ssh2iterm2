@@ -1,3 +1,11 @@
+> **Notice:**
+> 
+> I retired as a macOS user on January 1st, 2021. After nearly a decade as a Mac user I'm now back with Linux on my desktop.
+> 
+> The one thing  miss from macOS is iTerm2, but since there is no iTerm2 on Linux this is the way it has to be. This also means the support for ssh2iterm2 will probably be limited to merging pull requests from @dependabot for as long as stuff keeps working.
+> 
+> I really have no clue whether there are any users of this besides myself, so please drop me a note in [#58](https://github.com/arnested/ssh2iterm2/issues/58) if you do use it. We'll figure out the future from there.
+
 # Create iTerm2 dynamic profile from SSH config
 
 [![Build Status](https://travis-ci.org/arnested/ssh2iterm2.svg?branch=master)](https://travis-ci.org/arnested/ssh2iterm2)
