@@ -29,7 +29,7 @@ changelog:
       - '^test:'
 
 brews:
-  - github:
+  - tap:
       owner: arnested
       name: homebrew-ssh2iterm2
     folder: Formula
