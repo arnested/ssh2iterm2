@@ -1,6 +1,6 @@
 module github.com/arnested/ssh2iterm2
 
-go 1.12
+go 1.15
 
 require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
