@@ -7,7 +7,7 @@ require (
 	github.com/google/gops v0.3.18
 	github.com/kevinburke/ssh_config v0.0.0-20190725054713-01f96b0aa0cd
 	github.com/kr/pretty v0.1.0 // indirect
-	github.com/mattn/go-isatty v0.0.12
+	github.com/mattn/go-isatty v0.0.13
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/rjeczalik/notify v0.9.2
 	github.com/satori/go.uuid v1.2.0
