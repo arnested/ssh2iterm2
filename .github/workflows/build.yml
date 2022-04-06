@@ -45,7 +45,7 @@ jobs:
         CGO_ENABLED: 1 
       run: go test -v -race -cover -covermode=atomic -coverprofile=coverage.txt ./...
     - name: Upload coverage report to Codecov
-      uses: codecov/codecov-action@v2
+      uses: codecov/codecov-action@v3
       with:
         flags: go${{ matrix.go-version }}
   license_check:
