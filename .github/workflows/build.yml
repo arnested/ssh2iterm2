@@ -2,19 +2,30 @@ on:
 - push
 name: Build and test
 jobs:
+  go-versions:
+    name: Lookup go versions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.versions.outputs.matrix }}
+      minimal: ${{ steps.versions.outputs.minimal }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: arnested/go-version-action@v1
+      id: versions
   go_generate:
     name: Check generated code is up to date
     runs-on: ubuntu-latest
+    needs: go-versions
     env:
       workdir: go/src/github.com/arnested/ssh2iterm2
     steps:
     - uses: actions/checkout@v3
       with:
         path: ${{env.workdir}}
-    - name: Install Go
+    - name: Setup Go ${{ needs.go-versions.outputs.minimal }}
       uses: actions/setup-go@v3
       with:
-        go-version: '1.15'
+        go-version: ${{ needs.go-versions.outputs.minimal }}
     - name: go generate
       env:
         GO111MODULE: 'on'
@@ -27,12 +38,13 @@ jobs:
   build_and_test:
     name: Build and test
     runs-on: macos-latest
+    needs: go-versions
     strategy:
       matrix:
-        go-version: ['1.15']
+        go-version: ${{ fromJSON(needs.go-versions.outputs.matrix) }}
     steps:
     - uses: actions/checkout@v3
-    - name: Install Go
+    - name: Setup Go$ {{ matrix.go-version }}
       uses: actions/setup-go@v3
       with:
         go-version: ${{ matrix.go-version }}
@@ -51,12 +63,13 @@ jobs:
   license_check:
     name: License check
     runs-on: ubuntu-latest
+    needs: go-versions
     steps:
     - uses: actions/checkout@v3
-    - name: Install Go
+    - name: Setup Go ${{ needs.go-versions.outputs.minimal }}
       uses: actions/setup-go@v3
       with:
-        go-version: '1.15'
+        go-version: ${{ needs.go-versions.outputs.minimal }}
     - name: Install wwhrd
       env:
         GO111MODULE: 'off'
