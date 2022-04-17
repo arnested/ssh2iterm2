@@ -13,11 +13,11 @@ import (
 	"strings"
 
 	"github.com/google/gops/agent"
+	"github.com/google/uuid"
 	"github.com/kevinburke/ssh_config"
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
 	"github.com/rjeczalik/notify"
-	uuid "github.com/satori/go.uuid"
 	"github.com/urfave/cli"
 	"github.com/urfave/cli/altsrc"
 	"github.com/youtube/vitess/go/ioutil2"
@@ -169,7 +169,7 @@ func main() {
 }
 
 func ssh2iterm2(c *cli.Context) error {
-	ns, err := uuid.FromString("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
+	ns, err := uuid.Parse("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
 	if err != nil {
 		return err
 	}
@@ -261,7 +261,7 @@ func processFile(file string,
 
 			match := r.MatchString(name)
 			if !match {
-				uuid := uuid.NewV5(ns, name).String()
+				uuid := uuid.NewSHA1(ns, []byte(name)).String()
 				log.Printf("Identified %s", name)
 
 				var boundHosts []string
