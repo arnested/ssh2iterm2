@@ -3,7 +3,7 @@ module github.com/arnested/ssh2iterm2
 go 1.18
 
 require (
-	github.com/google/gops v0.3.24
+	github.com/google/gops v0.3.25
 	github.com/google/uuid v1.3.0
 	github.com/kevinburke/ssh_config v1.2.0
 	github.com/mattn/go-isatty v0.0.14
