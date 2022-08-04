@@ -25,18 +25,9 @@ jobs:
       with:
         path: ${{env.workdir}}
     - name: Setup Go ${{ needs.go-versions.outputs.minimal }}
-      uses: actions/setup-go@v3
+      uses: WillAbides/setup-go-faster@v1.7.0
       with:
         go-version: ${{ needs.go-versions.outputs.minimal }}
-    - name: go generate
-      env:
-        GO111MODULE: 'on'
-        GOPATH: ${{ github.workspace }}/go
-      working-directory: ${{env.workdir}}
-      run: go generate -x
-    - name: Diff after go generate
-      working-directory: ${{env.workdir}}
-      run: git diff --exit-code
   build_and_test:
     name: Build and test
     runs-on: macos-latest
@@ -47,12 +38,11 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Setup Go$ {{ matrix.go-version }}
-      uses: actions/setup-go@v3
+      uses: WillAbides/setup-go-faster@v1.7.0
       with:
         go-version: ${{ matrix.go-version }}
     - name: go test
       env:
-        GO111MODULE: 'on'
         GOOS: darwin
         GOARCH: amd64
         # We enable cgo to be able to test with `-race`.
@@ -62,23 +52,3 @@ jobs:
       uses: codecov/codecov-action@v3
       with:
         flags: go${{ matrix.go-version }}
-  license_check:
-    name: License check
-    runs-on: ubuntu-latest
-    needs: go-versions
-    steps:
-    - uses: actions/checkout@v3
-    - name: Setup Go ${{ needs.go-versions.outputs.minimal }}
-      uses: actions/setup-go@v3
-      with:
-        go-version: ${{ needs.go-versions.outputs.minimal }}
-    - name: Install wwhrd
-      env:
-        GO111MODULE: 'off'
-      run: go get -u github.com/frapposelli/wwhrd
-    - name: go mod vendor
-      env:
-        GO111MODULE: 'on'
-      run: go mod vendor
-    - name: wwhrd check
-      run: wwhrd check

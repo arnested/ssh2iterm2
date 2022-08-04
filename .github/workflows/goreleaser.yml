@@ -20,10 +20,9 @@ jobs:
         name: Bump version and push tag
         uses: anothrNick/github-tag-action@1.39.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           WITH_V: true
           DEFAULT_BUMP: patch
-          RELEASE_BRANCHES: main
   goreleaser:
     runs-on: macos-latest
     needs: bump-version
@@ -38,10 +37,11 @@ jobs:
         id: go-version
 
       -
-        name: Setup Go ${{ steps.go-version.outputs.latest }}
-        uses: actions/setup-go@v3
+        name: Setup Go ${{ steps.go-version.outputs.latest }}.x
+        uses: WillAbides/setup-go-faster@v1.7.0
         with:
-          go-version: ${{ steps.go-version.outputs.latest }}
+          go-version: ${{ steps.go-version.outputs.latest }}.x
+          ignore-local: true
       -
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v3.0.0

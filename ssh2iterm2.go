@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -14,7 +13,7 @@ import (
 
 	"github.com/google/gops/agent"
 	"github.com/google/uuid"
-	"github.com/kevinburke/ssh_config"
+	sshConfig "github.com/kevinburke/ssh_config"
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
 	"github.com/rjeczalik/notify"
@@ -31,6 +30,7 @@ type trigger struct {
 	Action    string `json:"action"`
 }
 
+//nolint:tagliatelle
 type profile struct {
 	Badge         string `json:"Badge Text"`
 	GUID          string `json:"Guid"`
@@ -44,6 +44,7 @@ type profile struct {
 
 type triggerlist []*trigger
 
+//nolint:tagliatelle
 type profilelist struct {
 	Profiles []*profile `json:",omitempty"`
 }
@@ -120,13 +121,13 @@ func main() {
 		}),
 	}
 
-	app.Before = func(c *cli.Context) error {
+	app.Before = func(ctx *cli.Context) error {
 		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 			initConfig := altsrc.InitInputSourceWithContext(app.Flags, altsrc.NewYamlSourceFromFlagFunc("config"))
-			_ = initConfig(c)
+			_ = initConfig(ctx)
 		}
 
-		if c.GlobalBool("enable-gops-agent") {
+		if ctx.GlobalBool("enable-gops-agent") {
 			if err := agent.Listen(agent.Options{ShutdownCleanup: true}); err != nil {
 				log.Fatal(err)
 			}
@@ -168,56 +169,57 @@ func main() {
 	}
 }
 
-func ssh2iterm2(c *cli.Context) error {
-	ns, err := uuid.Parse("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
+func ssh2iterm2(ctx *cli.Context) error {
+	namespace, err := uuid.Parse("CAAFD038-5E80-4266-B6CF-F4D036E092F4")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse static uuid: %w", err)
 	}
 
-	glob, err := homedir.Expand(c.GlobalString("glob"))
+	glob, err := homedir.Expand(ctx.GlobalString("glob"))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to expand glob: %w", err)
 	}
 
 	log.Printf("Glob is %q", glob)
 
 	files, err := filepath.Glob(glob)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get files matching glob: %w", err)
 	}
 
-	r := regexp.MustCompile(`\*`)
+	regex := regexp.MustCompile(`\*`)
 
 	profiles := &profilelist{}
 
-	automaticProfileSwitching := c.GlobalBool("automatic-profile-switching")
-	ssh := c.GlobalString("ssh")
+	automaticProfileSwitching := ctx.GlobalBool("automatic-profile-switching")
+	ssh := ctx.GlobalString("ssh")
 	log.Printf("SSH cli is %q", ssh)
 
 	for _, file := range files {
-		processFile(file, r, ssh, ns, profiles, automaticProfileSwitching)
+		processFile(file, regex, ssh, namespace, profiles, automaticProfileSwitching)
 	}
 
 	json, err := json.MarshalIndent(profiles, "", "    ")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal profiles into JSON: %w", err)
 	}
 
 	userConfigDir, err := os.UserConfigDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to locate user config directory: %w", err)
 	}
 
 	dynamicProfileFile, err := homedir.Expand(userConfigDir + "/iTerm2/DynamicProfiles/ssh2iterm2.json")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to expand name of dynamic profile file: %w", err)
 	}
 
 	log.Printf("Writing %q", dynamicProfileFile)
-	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0600)
 
+	//nolint:gomnd
+	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write dynamic profile file: %w", err)
 	}
 
 	return nil
@@ -225,9 +227,9 @@ func ssh2iterm2(c *cli.Context) error {
 
 //nolint:funlen // needs refactoring.
 func processFile(file string,
-	r *regexp.Regexp,
+	regex *regexp.Regexp,
 	ssh string,
-	ns uuid.UUID,
+	namespace uuid.UUID,
 	profiles *profilelist,
 	automaticProfileSwitching bool,
 ) {
@@ -236,12 +238,14 @@ func processFile(file string,
 	fileContent, err := os.Open(file)
 	if err != nil {
 		log.Print(err)
+
 		return
 	}
 
-	cfg, err := ssh_config.Decode(fileContent)
+	cfg, err := sshConfig.Decode(fileContent)
 	if err != nil {
 		log.Print(err)
+
 		return
 	}
 
@@ -259,9 +263,9 @@ func processFile(file string,
 				name = fmt.Sprintf("%s (%s)", hostname, comment)
 			}
 
-			match := r.MatchString(name)
+			match := regex.MatchString(name)
 			if !match {
-				uuid := uuid.NewSHA1(ns, []byte(name)).String()
+				uuid := uuid.NewSHA1(namespace, []byte(name)).String()
 				log.Printf("Identified %s", name)
 
 				var boundHosts []string
@@ -298,12 +302,13 @@ func tag(filename string) string {
 
 const channelBufferSize = 10
 
-func watch(c *cli.Context) error {
-	glob, err := homedir.Expand(c.GlobalString("glob"))
+func watch(ctx *cli.Context) error {
+	glob, err := homedir.Expand(ctx.GlobalString("glob"))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to expand glob: %w", err)
 	}
 
+	//nolint:gomnd
 	dir := filepath.Dir(strings.SplitAfterN(glob, "*", 2)[0])
 	log.Printf("Watching is %q", dir)
 
@@ -318,7 +323,7 @@ func watch(c *cli.Context) error {
 	for {
 		eventInfo := <-eventChan
 		if match, err := filepath.Match(glob, eventInfo.Path()); err == nil && match {
-			_ = ssh2iterm2(c)
+			_ = ssh2iterm2(ctx)
 		}
 	}
 }
@@ -328,39 +333,44 @@ type config struct {
 	SSH  string `yaml:"ssh"`
 }
 
-func editConfig(c *cli.Context) error {
-	configFile := c.GlobalString("config")
+func editConfig(ctx *cli.Context) error {
+	configFile := ctx.GlobalString("config")
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		err := createConfig(configFile, config{
-			Glob: c.GlobalString("glob"),
-			SSH:  c.GlobalString("ssh"),
+			Glob: ctx.GlobalString("glob"),
+			SSH:  ctx.GlobalString("ssh"),
 		})
 		if err != nil {
 			return err
 		}
 	}
 
-	editCmd := c.String("editor") + " '" + configFile + "'"
+	editCmd := ctx.String("editor") + " '" + configFile + "'"
 	cmd := exec.Command("sh", "-c", editCmd)
 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to run editor command: %w", err)
+	}
+
+	return nil
 }
 
 func createConfig(configFile string, config config) error {
 	data, err := yaml.Marshal(config)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal config into YAML: %w", err)
 	}
 
-	err = ioutil.WriteFile(configFile, data, 0600)
+	//nolint:gomnd
+	err = ioutil2.WriteFileAtomic(configFile, data, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
 	return nil
-} //nolint:gofumpt // false lint error with golangci-lint.
+}
