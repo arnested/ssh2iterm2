@@ -7,7 +7,7 @@ updates:
     time: '04:00'
     timezone: Europe/Copenhagen
   open-pull-requests-limit: 10
-  assignees:
+  reviewers:
   - arnested
 - package-ecosystem: gomod
   directory: "/"
@@ -16,5 +16,5 @@ updates:
     time: '04:00'
     timezone: Europe/Copenhagen
   open-pull-requests-limit: 10
-  assignees:
+  reviewers:
   - arnested
