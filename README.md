@@ -2,15 +2,11 @@
 > 
 > I retired as a macOS user on January 1st, 2021. After nearly a decade as a Mac user I'm now back with Linux on my desktop.
 > 
-> The one thing  miss from macOS is iTerm2, but since there is no iTerm2 on Linux this is the way it has to be. This also means the support for ssh2iterm2 will probably be limited to merging pull requests from @dependabot for as long as stuff keeps working.
+> The one thing I miss from macOS is iTerm2, but since there is no iTerm2 on Linux this is the way it has to be. This also means the support for ssh2iterm2 will probably be limited to merging pull requests from @dependabot for as long as stuff keeps working.
 > 
 > I really have no clue whether there are any users of this besides myself, so please drop me a note in [#58](https://github.com/arnested/ssh2iterm2/issues/58) if you do use it. We'll figure out the future from there.
 
 # Create iTerm2 dynamic profile from SSH config
-
-[![release](https://img.shields.io/github/release/arnested/ssh2iterm2.svg)](https://github.com/arnested/ssh2iterm2/releases/latest)
-[![Go Report Card](https://goreportcard.com/badge/github.com/arnested/ssh2iterm2)](https://goreportcard.com/report/github.com/arnested/ssh2iterm2)
-[![CLA assistant](https://cla-assistant.io/readme/badge/arnested/ssh2iterm2)](https://cla-assistant.io/arnested/ssh2iterm2)
 
 Converts your `~/.ssh/config` to Dynamic profiles in iTerm2.
 
@@ -27,7 +23,7 @@ I.e. set `SSH2ITERM2_GLOB=~/.ssh/config.d/*.conf` to run through all
 `*.conf` files in `~/.ssh/config.d` and `SSH2ITERM2_GLOB=~/.ssh/**/*.conf` will run through all
 `*.conf` files in all folders under `~/.ssh`.
 
-The glob pattern should follow Gos [path/filepath patterns](https://golang.org/pkg/path/filepath/#Match).
+The glob pattern should follow Gos [path/filepath patterns](https://pkg.go.dev/path/filepath#Match).
 
 ## Config file
 
