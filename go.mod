@@ -9,7 +9,7 @@ require (
 	github.com/mattn/go-isatty v0.0.16
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/rjeczalik/notify v0.9.2
-	github.com/urfave/cli v1.22.9
+	github.com/urfave/cli v1.22.10
 	github.com/youtube/vitess v2.1.1+incompatible
 	gopkg.in/yaml.v3 v3.0.1
 )
