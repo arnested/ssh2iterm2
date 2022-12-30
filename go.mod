@@ -6,7 +6,7 @@ require (
 	github.com/google/gops v0.3.26
 	github.com/google/uuid v1.3.0
 	github.com/kevinburke/ssh_config v1.2.0
-	github.com/mattn/go-isatty v0.0.16
+	github.com/mattn/go-isatty v0.0.17
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/rjeczalik/notify v0.9.2
 	github.com/urfave/cli v1.22.10
