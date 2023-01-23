@@ -17,8 +17,8 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
 	"github.com/rjeczalik/notify"
-	"github.com/urfave/cli"
-	"github.com/urfave/cli/altsrc"
+	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v2/altsrc"
 	"github.com/youtube/vitess/go/ioutil2"
 	"gopkg.in/yaml.v3"
 )
@@ -62,7 +62,7 @@ func main() {
 	app.Name = "ssh2iterm2"
 	app.Usage = "Create iTerm2 dynamic profile from SSH config"
 	app.EnableBashCompletion = true
-	app.Authors = []cli.Author{
+	app.Authors = []*cli.Author{
 		{
 			Name:  "Arne Jørgensen",
 			Email: "arne@arnested.dk",
@@ -88,36 +88,36 @@ func main() {
 	}
 
 	app.Flags = []cli.Flag{
-		altsrc.NewStringFlag(cli.StringFlag{
+		altsrc.NewStringFlag(&cli.StringFlag{
 			Name:      "glob",
 			Value:     userHomeDir + "/.ssh/config",
 			Usage:     "A file `GLOB` matching ssh config file(s)",
-			EnvVar:    "SSH2ITERM2_GLOB",
+			EnvVars:   []string{"SSH2ITERM2_GLOB"},
 			TakesFile: true,
 		}),
-		altsrc.NewStringFlag(cli.StringFlag{
+		altsrc.NewStringFlag(&cli.StringFlag{
 			Name:      "ssh",
 			Value:     ssh,
 			Usage:     "The ssh client `PATH`",
-			EnvVar:    "SSH2ITERM2_SSH_PATH",
+			EnvVars:   []string{"SSH2ITERM2_SSH_PATH"},
 			TakesFile: true,
 		}),
-		altsrc.NewBoolFlag(cli.BoolFlag{
-			Name:   "automatic-profile-switching",
-			Usage:  "Add hostname for automatic profile switching`",
-			EnvVar: "SSH2ITERM2_AUTOMATIC_PROFILE_SWITCHING",
+		altsrc.NewBoolFlag(&cli.BoolFlag{
+			Name:    "automatic-profile-switching",
+			Usage:   "Add hostname for automatic profile switching`",
+			EnvVars: []string{"SSH2ITERM2_AUTOMATIC_PROFILE_SWITCHING"},
 		}),
-		cli.StringFlag{
+		&cli.StringFlag{
 			Name:      "config",
 			Value:     configPath,
 			Usage:     "Read config from `FILE`",
-			EnvVar:    "SSH2ITERM2_CONFIG_FILE",
+			EnvVars:   []string{"SSH2ITERM2_CONFIG_FILE"},
 			TakesFile: true,
 		},
-		altsrc.NewBoolFlag(cli.BoolFlag{
-			Name:   "enable-gops-agent",
-			Usage:  "Run with a gops agent (see https://pkg.go.dev/github.com/google/gops?tab=overview)",
-			EnvVar: "SSH2ITERM2_WITH_GOPS_AGENT",
+		altsrc.NewBoolFlag(&cli.BoolFlag{
+			Name:    "enable-gops-agent",
+			Usage:   "Run with a gops agent (see https://pkg.go.dev/github.com/google/gops?tab=overview)",
+			EnvVars: []string{"SSH2ITERM2_WITH_GOPS_AGENT"},
 		}),
 	}
 
@@ -127,7 +127,7 @@ func main() {
 			_ = initConfig(ctx)
 		}
 
-		if ctx.GlobalBool("enable-gops-agent") {
+		if ctx.Bool("enable-gops-agent") {
 			if err := agent.Listen(agent.Options{ShutdownCleanup: true}); err != nil {
 				log.Fatal(err)
 			}
@@ -136,7 +136,7 @@ func main() {
 		return nil
 	}
 
-	app.Commands = []cli.Command{
+	app.Commands = []*cli.Command{
 		{
 			Name:   "sync",
 			Usage:  "Sync ssh config to iTerm2 dynamic profiles",
@@ -152,11 +152,11 @@ func main() {
 			Usage:  "Edit config file",
 			Action: editConfig,
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:   "editor",
-					Value:  "vi",
-					Usage:  "Use `EDITOR` to edit config file (create it of it doesn't exist)",
-					EnvVar: "EDITOR",
+				&cli.StringFlag{
+					Name:    "editor",
+					Value:   "vi",
+					Usage:   "Use `EDITOR` to edit config file (create it of it doesn't exist)",
+					EnvVars: []string{"EDITOR"},
 				},
 			},
 		},
@@ -175,7 +175,7 @@ func ssh2iterm2(ctx *cli.Context) error {
 		return fmt.Errorf("failed to parse static uuid: %w", err)
 	}
 
-	glob, err := homedir.Expand(ctx.GlobalString("glob"))
+	glob, err := homedir.Expand(ctx.String("glob"))
 	if err != nil {
 		return fmt.Errorf("failed to expand glob: %w", err)
 	}
@@ -191,8 +191,8 @@ func ssh2iterm2(ctx *cli.Context) error {
 
 	profiles := &profilelist{}
 
-	automaticProfileSwitching := ctx.GlobalBool("automatic-profile-switching")
-	ssh := ctx.GlobalString("ssh")
+	automaticProfileSwitching := ctx.Bool("automatic-profile-switching")
+	ssh := ctx.String("ssh")
 	log.Printf("SSH cli is %q", ssh)
 
 	for _, file := range files {
@@ -303,7 +303,7 @@ func tag(filename string) string {
 const channelBufferSize = 10
 
 func watch(ctx *cli.Context) error {
-	glob, err := homedir.Expand(ctx.GlobalString("glob"))
+	glob, err := homedir.Expand(ctx.String("glob"))
 	if err != nil {
 		return fmt.Errorf("failed to expand glob: %w", err)
 	}
@@ -334,12 +334,12 @@ type config struct {
 }
 
 func editConfig(ctx *cli.Context) error {
-	configFile := ctx.GlobalString("config")
+	configFile := ctx.String("config")
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		err := createConfig(configFile, config{
-			Glob: ctx.GlobalString("glob"),
-			SSH:  ctx.GlobalString("ssh"),
+			Glob: ctx.String("glob"),
+			SSH:  ctx.String("ssh"),
 		})
 		if err != nil {
 			return err
