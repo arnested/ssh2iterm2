@@ -3,7 +3,7 @@ module github.com/arnested/ssh2iterm2
 go 1.19
 
 require (
-	github.com/google/gops v0.3.26
+	github.com/google/gops v0.3.27
 	github.com/google/uuid v1.3.0
 	github.com/kevinburke/ssh_config v1.2.0
 	github.com/mattn/go-isatty v0.0.17
@@ -20,6 +20,6 @@ require (
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
-	golang.org/x/sys v0.4.0 // indirect
+	golang.org/x/sys v0.5.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 )
