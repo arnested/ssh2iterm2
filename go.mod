@@ -1,6 +1,6 @@
 module github.com/arnested/ssh2iterm2
 
-go 1.19
+go 1.20
 
 require (
 	github.com/google/gops v0.3.27
