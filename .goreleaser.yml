@@ -10,6 +10,7 @@ builds:
       - darwin
     goarch:
       - amd64
+      - arm64
     ldflags:
       - -X main.GitSummary={{ .Version }}
     flags:
