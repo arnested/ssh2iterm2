@@ -75,6 +75,8 @@ well :-)
 
   The password manager will get the host name as parameter.
 
+  This can be disabled with the option `--password-triggers=false`.
+
 ## Download
 
 A compiled MacOS binary can be downloaded from [releases](https://github.com/arnested/ssh2iterm2/releases/latest).
