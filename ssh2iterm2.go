@@ -104,8 +104,14 @@ func main() {
 		}),
 		altsrc.NewBoolFlag(&cli.BoolFlag{
 			Name:    "automatic-profile-switching",
-			Usage:   "Add hostname for automatic profile switching`",
+			Usage:   "Add hostname for automatic profile switching",
 			EnvVars: []string{"SSH2ITERM2_AUTOMATIC_PROFILE_SWITCHING"},
+		}),
+		altsrc.NewBoolFlag(&cli.BoolFlag{
+			Name:    "password-triggers",
+			Value:   true,
+			Usage:   "Add \"open password\" trigger to profiles",
+			EnvVars: []string{"SSH2ITERM2_PASSWORD_TRIGGERS"},
 		}),
 		&cli.StringFlag{
 			Name:      "config",
@@ -195,8 +201,10 @@ func ssh2iterm2(ctx *cli.Context) error {
 	ssh := ctx.String("ssh")
 	log.Printf("SSH cli is %q", ssh)
 
+	passwordTriggers := ctx.Bool("password-triggers")
+
 	for _, file := range files {
-		processFile(file, regex, ssh, namespace, profiles, automaticProfileSwitching)
+		processFile(file, regex, ssh, namespace, profiles, automaticProfileSwitching, passwordTriggers)
 	}
 
 	json, err := json.MarshalIndent(profiles, "", "    ")
@@ -232,6 +240,7 @@ func processFile(file string,
 	namespace uuid.UUID,
 	profiles *profilelist,
 	automaticProfileSwitching bool,
+	passwordTriggers bool,
 ) {
 	log.Printf("Parsing %q", file)
 
@@ -273,20 +282,25 @@ func processFile(file string,
 					boundHosts = []string{hostname}
 				}
 
+				var triggers *triggerlist
+				if passwordTriggers {
+					triggers = &triggerlist{&trigger{
+						Partial:   true,
+						Parameter: hostname,
+						Regex:     "\\[sudo\\] password for",
+						Action:    "PasswordTrigger",
+					}}
+				}
+
 				profiles.Profiles = append(profiles.Profiles, &profile{
 					Badge:         badge,
 					GUID:          uuid,
 					Name:          name,
 					Command:       fmt.Sprintf("%q %q", ssh, hostname),
 					CustomCommand: "Yes",
-					Triggers: &triggerlist{&trigger{
-						Partial:   true,
-						Parameter: hostname,
-						Regex:     "\\[sudo\\] password for",
-						Action:    "PasswordTrigger",
-					}},
-					Tags:       []string{tag},
-					BoundHosts: boundHosts,
+					Triggers:      triggers,
+					Tags:          []string{tag},
+					BoundHosts:    boundHosts,
 				})
 			}
 		}
