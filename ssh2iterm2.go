@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,8 +10,10 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 
+	"github.com/carlmjohnson/versioninfo"
 	"github.com/google/gops/agent"
 	"github.com/google/uuid"
 	sshConfig "github.com/kevinburke/ssh_config"
@@ -49,8 +52,12 @@ type profilelist struct {
 	Profiles []*profile `json:",omitempty"`
 }
 
-// GitSummary is the version string to be set at compile time via command line.
-var GitSummary string //nolint:gochecknoglobals
+var (
+	//go:embed LICENSE
+	license string
+	// Version is the version string to be set at compile time via command line.
+	version string
+)
 
 //nolint:funlen // needs refactoring.
 func main() {
@@ -68,7 +75,8 @@ func main() {
 			Email: "arne@arnested.dk",
 		},
 	}
-	app.Version = GitSummary
+	app.Version = getVersion()
+	app.Copyright = license
 
 	userHomeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -387,4 +395,22 @@ func createConfig(configFile string, config config) error {
 	}
 
 	return nil
+}
+
+func getVersion() string {
+	buildinfo, _ := debug.ReadBuildInfo()
+
+	if version == "" {
+		version = versioninfo.Revision
+
+		if versioninfo.DirtyBuild {
+			version += "-dirty"
+		}
+	}
+
+	if buildinfo.Main.Version != "(devel)" {
+		version = buildinfo.Main.Version
+	}
+
+	return version
 }
