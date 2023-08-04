@@ -3,7 +3,7 @@ module github.com/arnested/ssh2iterm2
 go 1.20
 
 require (
-	github.com/carlmjohnson/versioninfo v0.22.4
+	github.com/carlmjohnson/versioninfo v0.22.5
 	github.com/google/gops v0.3.27
 	github.com/google/uuid v1.3.0
 	github.com/kevinburke/ssh_config v1.2.0
