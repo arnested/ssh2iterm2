@@ -39,7 +39,7 @@ jobs:
 
       -
         name: Setup Go ${{ steps.go-version.outputs.latest }}.x
-        uses: WillAbides/setup-go-faster@v1.10.0
+        uses: WillAbides/setup-go-faster@v1.10.1
         with:
           go-version: ${{ steps.go-version.outputs.latest }}.x
           ignore-local: true
