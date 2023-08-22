@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/carlmjohnson/versioninfo v0.22.5
 	github.com/google/gops v0.3.28
-	github.com/google/uuid v1.3.0
+	github.com/google/uuid v1.3.1
 	github.com/kevinburke/ssh_config v1.2.0
 	github.com/mattn/go-isatty v0.0.19
 	github.com/mitchellh/go-homedir v1.1.0
