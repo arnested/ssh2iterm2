@@ -11,7 +11,7 @@ jobs:
       matrix: ${{ steps.versions.outputs.matrix }}
       minimal: ${{ steps.versions.outputs.minimal }}
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: arnested/go-version-action@v1
       id: versions
   go_generate:
@@ -21,7 +21,7 @@ jobs:
     env:
       workdir: go/src/github.com/arnested/ssh2iterm2
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         path: ${{env.workdir}}
     - name: Setup Go ${{ needs.go-versions.outputs.minimal }}
@@ -37,7 +37,7 @@ jobs:
         go-version: ${{ fromJSON(needs.go-versions.outputs.matrix) }}
         goarch: ["amd64", "arm64"]
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Setup Go$ {{ matrix.go-version }}
       uses: WillAbides/setup-go-faster@v1.10.1
       with:
