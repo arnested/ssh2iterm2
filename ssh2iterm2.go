@@ -53,7 +53,7 @@ type profilelist struct {
 }
 
 var (
-	//go:embed LICENSE
+	//go:embed LICENSE.md
 	license string
 	// Version is the version string to be set at compile time via command line.
 	version string
