@@ -28,6 +28,8 @@ jobs:
       uses: WillAbides/setup-go-faster@v1.13.0
       with:
         go-version: ${{ needs.go-versions.outputs.minimal }}
+    - name: Go version
+      run: go version
   build_and_test:
     name: Build and test
     runs-on: macos-latest
@@ -42,6 +44,8 @@ jobs:
       uses: WillAbides/setup-go-faster@v1.13.0
       with:
         go-version: ${{ matrix.go-version }}
+    - name: Go version
+      run: go version
     - name: go test
       env:
         GOOS: darwin
