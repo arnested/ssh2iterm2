@@ -1,4 +1,4 @@
-> **Notice:**
+> [!NOTE]
 > 
 > I retired as a macOS user on January 1st, 2021. After nearly a decade as a Mac user I'm now back with Linux on my desktop.
 > 
