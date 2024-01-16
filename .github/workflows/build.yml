@@ -25,7 +25,7 @@ jobs:
       with:
         path: ${{env.workdir}}
     - name: Setup Go ${{ needs.go-versions.outputs.minimal }}
-      uses: WillAbides/setup-go-faster@v1.13.0
+      uses: WillAbides/setup-go-faster@v1.14.0
       with:
         go-version: ${{ needs.go-versions.outputs.minimal }}
         ignore-local: true
@@ -42,7 +42,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Setup Go$ {{ matrix.go-version }}
-      uses: WillAbides/setup-go-faster@v1.13.0
+      uses: WillAbides/setup-go-faster@v1.14.0
       with:
         go-version: ${{ matrix.go-version }}.x
         ignore-local: true
