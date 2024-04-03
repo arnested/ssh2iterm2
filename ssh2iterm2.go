@@ -214,6 +214,7 @@ func ssh2iterm2(ctx *cli.Context) error {
 		processFile(file, regex, ssh, namespace, profiles, automaticProfileSwitching, passwordTriggers)
 	}
 
+	//nolint:musttag
 	json, err := json.MarshalIndent(profiles, "", "    ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal profiles into JSON: %w", err)
