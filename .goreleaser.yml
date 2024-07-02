@@ -1,3 +1,5 @@
+version: 2
+
 before:
   hooks:
     - go mod tidy
@@ -28,10 +30,10 @@ changelog:
       - '^test:'
 
 brews:
-  - tap:
+  - repository:
       owner: arnested
       name: homebrew-ssh2iterm2
-    folder: Formula
+    directory: Formula
     homepage: "https://github.com/arnested/ssh2iterm2"
     description: "Create iTerm2 dynamic profile from SSH config"
     install: |
