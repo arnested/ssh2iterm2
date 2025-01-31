@@ -1,6 +1,6 @@
 # Developer Certificate of Origin
 
-```
+```text
 Version 1.1
 
 Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
