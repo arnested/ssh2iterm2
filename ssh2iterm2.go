@@ -232,7 +232,7 @@ func ssh2iterm2(ctx *cli.Context) error {
 
 	log.Printf("Writing %q", dynamicProfileFile)
 
-	//nolint:gomnd
+	//nolint:mnd
 	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to write dynamic profile file: %w", err)
@@ -330,7 +330,7 @@ func watch(ctx *cli.Context) error {
 		return fmt.Errorf("failed to expand glob: %w", err)
 	}
 
-	//nolint:gomnd
+	//nolint:mnd
 	dir := filepath.Dir(strings.SplitAfterN(glob, "*", 2)[0])
 	log.Printf("Watching is %q", dir)
 
@@ -388,7 +388,7 @@ func createConfig(configFile string, config config) error {
 		return fmt.Errorf("failed to marshal config into YAML: %w", err)
 	}
 
-	//nolint:gomnd
+	//nolint:mnd
 	err = ioutil2.WriteFileAtomic(configFile, data, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
