@@ -11,7 +11,7 @@ jobs:
     env:
       workdir: go/src/github.com/arnested/ssh2iterm2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: ${{env.workdir}}
       - name: Setup Go
@@ -27,7 +27,7 @@ jobs:
       matrix:
         goarch: ["amd64", "arm64"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup Go
         uses: WillAbides/setup-go-faster@v1.14.0
         with:
