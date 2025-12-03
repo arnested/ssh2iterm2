@@ -40,10 +40,9 @@ jobs:
 
       -
         name: Setup Go ${{ steps.go-version.outputs.latest }}.x
-        uses: WillAbides/setup-go-faster@v1.14.0
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ steps.go-version.outputs.latest }}.x
-          ignore-local: true
       -
         name: Go version
         run: go version
