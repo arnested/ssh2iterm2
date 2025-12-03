@@ -8,12 +8,8 @@ jobs:
   go_generate:
     name: Check generated code is up to date
     runs-on: ubuntu-24.04
-    env:
-      workdir: go/src/github.com/arnested/ssh2iterm2
     steps:
       - uses: actions/checkout@v6
-        with:
-          path: ${{env.workdir}}
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
