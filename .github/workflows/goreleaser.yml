@@ -35,7 +35,7 @@ jobs:
         with:
           fetch-depth: 0
       -
-        uses: arnested/go-version-action@v1
+        uses: arnested/go-version-action@v2
         id: go-version
 
       -
