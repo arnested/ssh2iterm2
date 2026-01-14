@@ -40,7 +40,7 @@ jobs:
 
       -
         name: Setup Go ${{ steps.go-version.outputs.latest }}.x
-        uses: actions/setup-go@v6
+        uses: arnested/setup-go@rc
         with:
           go-version: ${{ steps.go-version.outputs.latest }}.x
       -
