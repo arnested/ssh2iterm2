@@ -35,14 +35,10 @@ jobs:
         with:
           fetch-depth: 0
       -
-        uses: arnested/go-version-action@v2
-        id: go-version
-
-      -
-        name: Setup Go ${{ steps.go-version.outputs.latest }}.x
+        name: Setup Go
         uses: arnested/setup-go@rc
         with:
-          go-version: ${{ steps.go-version.outputs.latest }}.x
+          go-version-file: go.mod
       -
         name: Go version
         run: go version
@@ -50,7 +46,6 @@ jobs:
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6.4.0
         with:
-          version: "~> v2"
           args: release
         env:
-          GITHUB_TOKEN: ${{ secrets.GORELEASER_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
