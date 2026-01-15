@@ -1,14 +1,9 @@
 ---
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
-    - go generate ./...
-
 builds:
   - env:
-      - GO111MODULE=on
+      - CGO_ENABLED=0
     goos:
       - darwin
     goarch:
@@ -16,19 +11,25 @@ builds:
       - arm64
     flags:
       - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Tag}} -X main.Date={{.CommitDate}}
+    mod_timestamp: '{{.CommitTimestamp}}'
 
 checksum:
   name_template: 'checksums.txt'
 
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: '{{ .Tag }}-snapshot-{{ .ShortCommit }}'
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - '^docs:'
-      - '^test:'
+  use: github-native
+
+release:
+  # If set to auto, will mark the release as not ready for production
+  # in case there is an indicator for this in the tag e.g. v1.0.0-rc1
+  # If set to true, will mark the release as not ready for production.
+  # Default is false.
+  prerelease: auto
 
 brews:
   - repository:
