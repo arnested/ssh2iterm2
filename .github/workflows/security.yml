@@ -1,0 +1,52 @@
+---
+name: Security Checks
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 15 * * 0'
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  security-events: write
+
+jobs:
+  gosec:
+    name: Golang Security Checker
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v6
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@v2.22.11
+        with:
+          args: '-no-fail -fmt sarif -out results.sarif -tests ./...'
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          # Path to SARIF file relative to the root of the repository
+          sarif_file: results.sarif
+  govulncheck:
+    name: Govulncheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Go
+        uses: arnested/setup-go@rc
+        with:
+          go-version-file: go.mod
+      - id: govulncheck
+        uses: arnested/govulncheck-action@main
+        with:
+          output-format: sarif
+          output-file: results.sarif
+          setup-go: false
+          repo-checkout: false
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
