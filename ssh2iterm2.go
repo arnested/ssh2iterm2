@@ -89,8 +89,8 @@ func main() {
 	}
 
 	configPath := ""
-	userConfigDir, err := os.UserConfigDir()
 
+	userConfigDir, err := os.UserConfigDir()
 	if err == nil {
 		configPath = userConfigDir + "/ssh2iterm2.yaml"
 	}
@@ -136,13 +136,15 @@ func main() {
 	}
 
 	app.Before = func(ctx *cli.Context) error {
-		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		_, err := os.Stat(configPath)
+		if !os.IsNotExist(err) {
 			initConfig := altsrc.InitInputSourceWithContext(app.Flags, altsrc.NewYamlSourceFromFlagFunc("config"))
 			_ = initConfig(ctx)
 		}
 
 		if ctx.Bool("enable-gops-agent") {
-			if err := agent.Listen(agent.Options{ShutdownCleanup: true}); err != nil {
+			err := agent.Listen(agent.Options{ShutdownCleanup: true})
+			if err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -336,7 +338,8 @@ func watch(ctx *cli.Context) error {
 
 	eventChan := make(chan notify.EventInfo, channelBufferSize)
 
-	if err := notify.Watch(dir+"/...", eventChan, notify.All); err != nil {
+	err = notify.Watch(dir+"/...", eventChan, notify.All)
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -344,7 +347,9 @@ func watch(ctx *cli.Context) error {
 
 	for {
 		eventInfo := <-eventChan
-		if match, err := filepath.Match(glob, eventInfo.Path()); err == nil && match {
+
+		match, err := filepath.Match(glob, eventInfo.Path())
+		if err == nil && match {
 			_ = ssh2iterm2(ctx)
 		}
 	}
@@ -358,7 +363,8 @@ type config struct {
 func editConfig(ctx *cli.Context) error {
 	configFile := ctx.String("config")
 
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+	_, err := os.Stat(configFile)
+	if os.IsNotExist(err) {
 		err := createConfig(configFile, config{
 			Glob: ctx.String("glob"),
 			SSH:  ctx.String("ssh"),
@@ -369,13 +375,14 @@ func editConfig(ctx *cli.Context) error {
 	}
 
 	editCmd := ctx.String("editor") + " '" + configFile + "'"
-	cmd := exec.Command("sh", "-c", editCmd)
+	cmd := exec.CommandContext(ctx.Context, "sh", "-c", editCmd)
 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	if err != nil {
 		return fmt.Errorf("failed to run editor command: %w", err)
 	}
 
