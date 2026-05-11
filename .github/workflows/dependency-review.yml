@@ -12,6 +12,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, MIT, LicenseRef-scancode-google-patent-license-golang
