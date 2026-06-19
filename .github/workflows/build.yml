@@ -9,7 +9,7 @@ jobs:
     name: Check generated code is up to date
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: arnested/setup-go@rc
         with:
@@ -23,7 +23,7 @@ jobs:
       matrix:
         goarch: ["amd64", "arm64"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Go
         uses: arnested/setup-go@rc
         with:
