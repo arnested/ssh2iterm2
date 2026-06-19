@@ -1,6 +1,6 @@
 module github.com/arnested/ssh2iterm2
 
-go 1.26.4
+go 1.27rc1
 
 require (
 	github.com/carlmjohnson/versioninfo v0.22.5
